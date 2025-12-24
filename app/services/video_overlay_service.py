@@ -31,14 +31,23 @@ def _build_drawtext_filter(
     """
     构造 drawtext 过滤器字符串。
     """
-    safe_text = text.replace(":", r"\:").replace("'", r"\'").replace(",", r"\,")
+    # 需要转义 ffmpeg 特殊字符与换行，避免滤镜被拆分
+    safe_text = (
+        text
+        .replace(":", r"\:")
+        .replace("'", r"\'")
+        .replace(",", r"\,")
+        .replace("\n", r"\n")
+    )
+    # enable 表达式中的逗号需要转义，否则会被解析为下一个过滤器
+    enable_expr = f"between(t\\,{start:.3f}\\,{end:.3f})"
     parts = [
         f"text='{safe_text}'",
         f"x={x}",
         f"y={y}",
         f"fontsize={font_size}",
         f"fontcolor={font_color}",
-        f"enable='between(t,{start:.3f},{end:.3f})'",
+        f"enable='{enable_expr}'",
     ]
     if fontfile:
         safe_font = str(fontfile).replace("'", r"\'")

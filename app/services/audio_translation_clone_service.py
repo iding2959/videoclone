@@ -143,77 +143,40 @@ async def process_audio_translation_clone(
         raise AudioTranslationCloneError(f"音频切分失败: {str(e)}")
     
     # 步骤4: 对每个切分后的音频段进行音色克隆
-    # 计算切分时间段（与 segment_audio 内部逻辑一致）
+    # 计算切分时间段（按转录段逐段 + 尾段）
     time_segments = _calculate_time_segments(segments, duration)
     
     # 按 start 时间排序 segments 和 translated_segments
     sorted_segments = sorted(segments, key=lambda x: x.get("start", 0))
     sorted_translated_segments = sorted(translated_segments, key=lambda x: x.get("start", 0))
     
-    # 构建时间段索引到翻译文本的映射
-    # 根据切分规则匹配翻译文本
+    # 为每个时间段准备翻译文本：转录段有翻译，尾段无翻译
     translated_texts = []
+    for seg in sorted_segments:
+        seg_start = seg.get("start", 0)
+        translated_seg = next(
+            (s for s in sorted_translated_segments if abs(s.get("start", 0) - seg_start) < 0.01),
+            None
+        )
+        translated_texts.append(translated_seg.get("translated_text", "") if translated_seg else "")
     
-    if len(sorted_segments) == 1:
-        # 只有一个 segment 的情况
-        segment = sorted_segments[0]
-        segment_start = segment.get("start", 0)
-        segment_end = segment.get("end", 0)
-        
-        # 第一段：0 到 segment 的 start（没有对应的翻译文本）
-        if segment_start > 0:
-            translated_texts.append("")  # 第一段没有翻译文本
-        
-        # 第二段：segment 的 end 到结束（最后多余的一段，没有对应的文本，不进行克隆）
-        if segment_end < duration:
-            translated_texts.append("")  # 最后一段是多余的部分，没有翻译文本
-    else:
-        # 多个 segments 的情况
-        # 第一段：0 到第二个 segment 的 start
-        # 这个时间段包含了第一个 segment，所以使用第一个 segment 的翻译文本
-        second_segment_start = sorted_segments[1].get("start", 0)
-        if second_segment_start > 0:
-            # 使用第一个 segment 的翻译文本
-            first_segment = sorted_segments[0]
-            translated_seg = next(
-                (s for s in sorted_translated_segments if abs(s.get("start", 0) - first_segment.get("start", 0)) < 0.01),
-                None
-            )
-            translated_text = translated_seg.get("translated_text", "") if translated_seg else ""
-            translated_texts.append(translated_text)
-        
-        # 中间段：从第二个 segment 开始，每个 segment 的 start 到 end
-        # 这些段对应 sorted_segments[1:] 的翻译文本
-        for i in range(1, len(sorted_segments)):
-            segment = sorted_segments[i]
-            translated_seg = next(
-                (s for s in sorted_translated_segments if abs(s.get("start", 0) - segment.get("start", 0)) < 0.01),
-                None
-            )
-            translated_text = translated_seg.get("translated_text", "") if translated_seg else ""
-            translated_texts.append(translated_text)
-        
-        # 最后一段：最后一个 segment 的 end 到音频结束（最后多余的一段）
-        # 这是音频末尾多余的部分，没有对应的文本，所以不进行音色克隆
-        # 检查最后一段是否存在（最后一个 segment 的 end 是否小于 duration）
-        last_segment = sorted_segments[-1]
-        last_segment_end = last_segment.get("end", 0)
-        if last_segment_end < duration:
-            # 最后一段是多余的部分，没有翻译文本，不进行克隆
-            translated_texts.append("")
+    # 尾段（原始音频，不克隆）追加空翻译文本
+    last_end = sorted_segments[-1].get("end", 0) if sorted_segments else 0
+    if last_end < duration:
+        translated_texts.append("")
     
     task_results = []
     for idx, (segmented_audio_path, (start_time, end_time)) in enumerate(zip(segmented_audio_paths, time_segments)):
         # 获取对应的翻译文本
         translated_text = translated_texts[idx] if idx < len(translated_texts) else ""
         
-        # 如果没有翻译文本，跳过这个音频段
+        # 如果没有翻译文本（尾段或空段），跳过克隆，仅返回原始音频路径
         if not translated_text or not translated_text.strip():
             task_results.append({
                 "segment_index": idx + 1,
                 "time_range": f"{start_time:.2f}-{end_time:.2f}",
                 "task_id": None,
-                "error": "该音频段没有对应的翻译文本",
+                "error": "该音频段没有对应的翻译文本（尾段或空翻译）",
                 "audio_path": str(segmented_audio_path),
             })
             continue
@@ -329,54 +292,28 @@ def _calculate_time_segments(
     duration: float
 ) -> List[tuple]:
     """
-    计算切分时间段（与 audio_segmentation_service 中的逻辑一致）
-    
-    Args:
-        segments: 转录结果的 segments 列表
-        duration: 音频总时长
-        
-    Returns:
-        时间段列表，每个元素为 (start_time, end_time) 元组
+    计算切分时间段：逐段(start,end) + 尾段。
+    尾段用于保留原始音频，不进行克隆。
     """
     time_segments = []
     
     if not segments:
         return time_segments
     
-    # 按 start 时间排序 segments
     sorted_segments = sorted(segments, key=lambda x: x.get("start", 0))
     
-    if len(sorted_segments) == 1:
-        # 只有一个 segment 的情况
-        segment = sorted_segments[0]
-        segment_start = segment.get("start", 0)
-        segment_end = segment.get("end", 0)
-        
-        # 第一段：0 到 segment 的 start
-        if segment_start > 0:
-            time_segments.append((0.0, segment_start))
-        
-        # 第二段：segment 的 end 到结束
-        if segment_end < duration:
-            time_segments.append((segment_end, duration))
-    else:
-        # 多个 segments 的情况
-        # 第一段：0 到第二个 segment 的 start
-        second_segment_start = sorted_segments[1].get("start", 0)
-        if second_segment_start > 0:
-            time_segments.append((0.0, second_segment_start))
-        
-        # 中间段：从第二个 segment 开始，每个 segment 的 start 到 end
-        for i in range(1, len(sorted_segments)):
-            segment = sorted_segments[i]
-            segment_start = segment.get("start", 0)
-            segment_end = segment.get("end", 0)
-            time_segments.append((segment_start, segment_end))
-        
-        # 最后一段：最后一个 segment 的 end 到音频结束
-        last_segment_end = sorted_segments[-1].get("end", 0)
-        if last_segment_end < duration:
-            time_segments.append((last_segment_end, duration))
+    # 逐段
+    for seg in sorted_segments:
+        seg_start = seg.get("start", 0)
+        seg_end = seg.get("end", 0)
+        if seg_end <= seg_start:
+            continue
+        time_segments.append((float(seg_start), float(seg_end)))
+    
+    # 尾段
+    last_end = sorted_segments[-1].get("end", 0)
+    if last_end < duration:
+        time_segments.append((float(last_end), float(duration)))
     
     return time_segments
 

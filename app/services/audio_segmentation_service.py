@@ -142,37 +142,18 @@ def _calculate_time_segments(
     # 按 start 时间排序 segments
     sorted_segments = sorted(segments, key=lambda x: x.get("start", 0))
     
-    if len(sorted_segments) == 1:
-        # 只有一个 segment 的情况
-        segment = sorted_segments[0]
-        segment_start = segment.get("start", 0)
-        segment_end = segment.get("end", 0)
-        
-        # 第一段：0 到 segment 的 start
-        if segment_start > 0:
-            time_segments.append((0.0, segment_start))
-        
-        # 第二段：segment 的 end 到结束
-        if segment_end < duration:
-            time_segments.append((segment_end, duration))
-    else:
-        # 多个 segments 的情况
-        # 第一段：0 到第二个 segment 的 start
-        second_segment_start = sorted_segments[1].get("start", 0)
-        if second_segment_start > 0:
-            time_segments.append((0.0, second_segment_start))
-        
-        # 中间段：从第二个 segment 开始，每个 segment 的 start 到 end
-        for i in range(1, len(sorted_segments)):
-            segment = sorted_segments[i]
-            segment_start = segment.get("start", 0)
-            segment_end = segment.get("end", 0)
-            time_segments.append((segment_start, segment_end))
-        
-        # 最后一段：最后一个 segment 的 end 到音频结束
-        last_segment_end = sorted_segments[-1].get("end", 0)
-        if last_segment_end < duration:
-            time_segments.append((last_segment_end, duration))
+    # 逐段按 start/end 切分，保持与转录段落一致
+    for seg in sorted_segments:
+        seg_start = seg.get("start", 0)
+        seg_end = seg.get("end", 0)
+        if seg_end <= seg_start:
+            continue
+        time_segments.append((float(seg_start), float(seg_end)))
+
+    # 追加尾段（原始音频，不做克隆/翻译）
+    last_end = sorted_segments[-1].get("end", 0) if sorted_segments else 0
+    if last_end < duration:
+        time_segments.append((float(last_end), float(duration)))
     
     return time_segments
 

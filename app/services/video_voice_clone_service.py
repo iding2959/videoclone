@@ -85,37 +85,46 @@ async def _collect_and_merge_clone_audios(
     max_wait_time: float = 300.0,
     base_url: str = "http://localhost:8000",
 ) -> Path:
-    """基于克隆结果下载并合并音频。"""
+    """
+    基于克隆结果下载并合并音频。
+    仅合并有翻译文本的克隆段 + 尾段原始音频，确保段数与切分一致。
+    """
     tasks = clone_result.get("tasks", [])
     if not tasks:
         raise VideoVoiceCloneError("没有生成任何克隆任务，无法合并音频")
 
+    # 按 segment_index 排序
     sorted_tasks = sorted(tasks, key=lambda x: x.get("segment_index", 0))
-    task_info_list = []
-    tail_audio_paths: List[Path] = []
 
+    # 分离克隆段与尾段
+    clone_task_info = []  # (task_id, segment_index)
+    tail_audio_paths: List[Path] = []
     for task in sorted_tasks:
         task_id = task.get("task_id")
-        segment_index = task.get("segment_index", 0)
-        if task_id:
-            task_info_list.append((task_id, segment_index))
+        error = task.get("error") or ""
         audio_path_str = task.get("audio_path")
-        if audio_path_str:
+        seg_idx = task.get("segment_index", 0)
+
+        if task_id:
+            clone_task_info.append((task_id, seg_idx))
+        # 认为没有翻译文本的段（尾段或空翻译）只保留原始音频
+        if "没有对应的翻译文本" in error and audio_path_str:
             tail_audio_paths.append(Path(audio_path_str))
 
-    logger.info("开始收集克隆任务音频，总任务数: %d", len(task_info_list))
+    logger.info("开始收集克隆任务音频，克隆段数: %d, 尾段数: %d", len(clone_task_info), len(tail_audio_paths))
 
     cloned_audio_files: List[Path] = []
-    if task_info_list:
+    if clone_task_info:
         logger.info("等待并下载克隆音频，轮询间隔: %.1fs，超时: %.1fs", query_interval, max_wait_time)
         cloned_audio_files.extend(
             await _wait_and_download_cloned_audios(
-                task_info_list=task_info_list,
+                task_info_list=clone_task_info,
                 query_interval=query_interval,
                 max_wait_time=max_wait_time,
             )
         )
 
+    # 追加尾段原始音频
     for tail_path in tail_audio_paths:
         if tail_path.exists():
             cloned_audio_files.append(tail_path)
@@ -125,7 +134,7 @@ async def _collect_and_merge_clone_audios(
             cloned_audio_files.append(downloaded)
 
     if not cloned_audio_files:
-        raise VideoVoiceCloneError("未获取到任何可用的克隆音频文件")
+        raise VideoVoiceCloneError("未获取到任何可用的克隆/原始音频文件")
 
     try:
         logger.info("开始合并 %d 段音频", len(cloned_audio_files))

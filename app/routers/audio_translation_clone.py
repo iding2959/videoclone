@@ -2,10 +2,11 @@
 音频翻译克隆路由
 整合音频转录、翻译、切分和音色克隆的完整流程
 """
+import json
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form
 
@@ -13,6 +14,7 @@ from app.services.audio_translation_clone_service import (
     process_audio_translation_clone,
     AudioTranslationCloneError,
 )
+from app.services.tts_service import query_task_status, TTSError
 
 router = APIRouter()
 
@@ -124,4 +126,100 @@ async def audio_translation_clone_endpoint(
             audio_file_path.unlink()
         if emo_audio_path and emo_audio_path.exists():
             emo_audio_path.unlink()
+
+
+@router.post("/api/audio/translation-clone/query-tasks")
+async def query_clone_tasks_status(
+    task_ids: str = Form(...),
+):
+    """
+    批量查询音色克隆任务状态
+    
+    查询多个任务的状态和结果。任务完成后，从返回的 result 中获取音频地址。
+    
+    Args:
+        task_ids: 任务ID列表的JSON字符串，例如 ["task_id_1", "task_id_2", "task_id_3"]
+        
+    Returns:
+        包含所有任务状态和结果的字典
+    """
+    try:
+        # 解析任务ID列表
+        try:
+            task_id_list = json.loads(task_ids)
+            if not isinstance(task_id_list, list):
+                raise ValueError("task_ids 必须是数组")
+        except json.JSONDecodeError as e:
+            raise HTTPException(status_code=400, detail=f"任务ID列表格式错误: {str(e)}")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        
+        if not task_id_list:
+            raise HTTPException(status_code=400, detail="任务ID列表不能为空")
+        
+        # 批量查询任务状态
+        results = []
+        for task_id in task_id_list:
+            if not task_id or not str(task_id).strip():
+                results.append({
+                    "task_id": task_id,
+                    "status": "error",
+                    "error": "任务ID为空",
+                })
+                continue
+            
+            try:
+                task_result = await query_task_status(task_id=str(task_id))
+                results.append({
+                    "task_id": task_id,
+                    "status": "success",
+                    "result": task_result,
+                })
+            except TTSError as e:
+                results.append({
+                    "task_id": task_id,
+                    "status": "error",
+                    "error": str(e),
+                })
+            except Exception as e:
+                results.append({
+                    "task_id": task_id,
+                    "status": "error",
+                    "error": f"查询失败: {str(e)}",
+                })
+        
+        return {
+            "message": "批量查询完成",
+            "total_tasks": len(task_id_list),
+            "tasks": results,
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
+
+
+@router.get("/api/audio/translation-clone/task/{task_id}")
+async def query_single_clone_task_status(task_id: str):
+    """
+    查询单个音色克隆任务状态
+    
+    查询单个任务的状态和结果。任务完成后，从返回的 result 中获取音频地址。
+    
+    Args:
+        task_id: 任务ID（从 /api/audio/translation-clone 接口返回的 tasks 中的 task_id）
+        
+    Returns:
+        任务状态和结果
+    """
+    try:
+        result = await query_task_status(task_id=task_id)
+        return result
+    
+    except TTSError as e:
+        raise HTTPException(status_code=500, detail=f"查询任务状态失败: {str(e)}")
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
 

@@ -157,8 +157,8 @@ async def _collect_and_merge_clone_audios(
 async def process_video_voice_clone(
     video_path: Path,
     title_text: str,
-    top_cut: int = 200,
-    bottom_cut: int = 250,
+    top_cut: int = 390,
+    bottom_cut: int = 430,
     query_interval: float = 2.0,
     max_wait_time: float = 300.0,
     base_url: str = "http://localhost:8000",

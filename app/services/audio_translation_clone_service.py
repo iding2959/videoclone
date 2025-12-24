@@ -18,7 +18,6 @@ class AudioTranslationCloneError(Exception):
 
 async def process_audio_translation_clone(
     audio_file_path: Path,
-    prompt_audio_path: Path,
     transcription_model: Optional[str] = None,
     transcription_language: Optional[str] = None,
     transcription_response_format: Optional[str] = None,
@@ -40,11 +39,10 @@ async def process_audio_translation_clone(
     1. 音频转录 - 将音频转录为文本，得到 segments 和 duration
     2. 翻译文本 - 对每个 segment 的文本进行翻译
     3. 音频切分 - 根据 segments 切分音频，得到对应的音频段（包括最后多余的一段）
-    4. 音色克隆 - 对每个切分后的音频段，使用对应的翻译文本进行音色克隆
+    4. 音色克隆 - 对每个切分后的音频段，使用该音频段本身作为音色参考，使用对应的翻译文本进行音色克隆
     
     Args:
         audio_file_path: 要处理的音频文件路径
-        prompt_audio_path: 音色参考音频文件路径
         transcription_model: 转录使用的模型（可选，默认使用配置中的模型）
         transcription_language: 转录使用的语言代码（可选，默认使用配置中的语言）
         transcription_response_format: 转录响应格式（可选，默认使用配置中的格式）
@@ -67,9 +65,6 @@ async def process_audio_translation_clone(
     """
     if not audio_file_path.exists():
         raise AudioTranslationCloneError(f"音频文件不存在: {audio_file_path}")
-    
-    if not prompt_audio_path.exists():
-        raise AudioTranslationCloneError(f"音色参考音频文件不存在: {prompt_audio_path}")
     
     if emo_audio_path and not emo_audio_path.exists():
         raise AudioTranslationCloneError(f"情感参考音频文件不存在: {emo_audio_path}")
@@ -169,20 +164,23 @@ async def process_audio_translation_clone(
         if segment_start > 0:
             translated_texts.append("")  # 第一段没有翻译文本
         
-        # 第二段：segment 的 end 到结束（最后多余的一段，使用该 segment 的翻译文本）
+        # 第二段：segment 的 end 到结束（最后多余的一段，没有对应的文本，不进行克隆）
         if segment_end < duration:
+            translated_texts.append("")  # 最后一段是多余的部分，没有翻译文本
+    else:
+        # 多个 segments 的情况
+        # 第一段：0 到第二个 segment 的 start
+        # 这个时间段包含了第一个 segment，所以使用第一个 segment 的翻译文本
+        second_segment_start = sorted_segments[1].get("start", 0)
+        if second_segment_start > 0:
+            # 使用第一个 segment 的翻译文本
+            first_segment = sorted_segments[0]
             translated_seg = next(
-                (s for s in sorted_translated_segments if abs(s.get("start", 0) - segment.get("start", 0)) < 0.01),
+                (s for s in sorted_translated_segments if abs(s.get("start", 0) - first_segment.get("start", 0)) < 0.01),
                 None
             )
             translated_text = translated_seg.get("translated_text", "") if translated_seg else ""
             translated_texts.append(translated_text)
-    else:
-        # 多个 segments 的情况
-        # 第一段：0 到第二个 segment 的 start（没有对应的翻译文本）
-        second_segment_start = sorted_segments[1].get("start", 0)
-        if second_segment_start > 0:
-            translated_texts.append("")  # 第一段没有翻译文本
         
         # 中间段：从第二个 segment 开始，每个 segment 的 start 到 end
         # 这些段对应 sorted_segments[1:] 的翻译文本
@@ -196,17 +194,13 @@ async def process_audio_translation_clone(
             translated_texts.append(translated_text)
         
         # 最后一段：最后一个 segment 的 end 到音频结束（最后多余的一段）
-        # 使用最后一个 segment 的翻译文本
+        # 这是音频末尾多余的部分，没有对应的文本，所以不进行音色克隆
         # 检查最后一段是否存在（最后一个 segment 的 end 是否小于 duration）
         last_segment = sorted_segments[-1]
         last_segment_end = last_segment.get("end", 0)
         if last_segment_end < duration:
-            translated_seg = next(
-                (s for s in sorted_translated_segments if abs(s.get("start", 0) - last_segment.get("start", 0)) < 0.01),
-                None
-            )
-            translated_text = translated_seg.get("translated_text", "") if translated_seg else ""
-            translated_texts.append(translated_text)
+            # 最后一段是多余的部分，没有翻译文本，不进行克隆
+            translated_texts.append("")
     
     task_results = []
     for idx, (segmented_audio_path, (start_time, end_time)) in enumerate(zip(segmented_audio_paths, time_segments)):
@@ -225,10 +219,10 @@ async def process_audio_translation_clone(
             continue
         
         try:
-            # 使用原始的 prompt_audio 作为音色参考
+            # 使用切分后的音频段本身作为音色参考
             result = await synthesize_audio_async(
                 text=translated_text,
-                prompt_audio_path=prompt_audio_path,
+                prompt_audio_path=segmented_audio_path,
                 emo_control_method=emo_control_method,
                 emo_weight=emo_weight,
                 emo_text=emo_text,
@@ -240,21 +234,48 @@ async def process_audio_translation_clone(
             )
             
             task_id = result.get("task_id")
-            task_results.append({
-                "segment_index": idx + 1,
-                "time_range": f"{start_time:.2f}-{end_time:.2f}",
-                "task_id": task_id,
-                "translated_text": translated_text,
-                "error": None,
-                "audio_path": str(segmented_audio_path),
-            })
+            if not task_id:
+                # 如果 task_id 为空，记录错误信息
+                # 即使 API 返回了成功消息，如果没有 task_id，也应该视为错误
+                api_message = result.get("message") or result.get("error") or ""
+                if api_message and "成功" in api_message:
+                    error_msg = f"音色克隆API返回成功但task_id为空: {api_message}"
+                else:
+                    error_msg = api_message or "音色克隆API返回的task_id为空"
+                task_results.append({
+                    "segment_index": idx + 1,
+                    "time_range": f"{start_time:.2f}-{end_time:.2f}",
+                    "task_id": None,
+                    "translated_text": translated_text,
+                    "error": error_msg,
+                    "audio_path": str(segmented_audio_path),
+                })
+            else:
+                task_results.append({
+                    "segment_index": idx + 1,
+                    "time_range": f"{start_time:.2f}-{end_time:.2f}",
+                    "task_id": task_id,
+                    "translated_text": translated_text,
+                    "error": None,
+                    "audio_path": str(segmented_audio_path),
+                })
         
         except TTSError as e:
             task_results.append({
                 "segment_index": idx + 1,
                 "time_range": f"{start_time:.2f}-{end_time:.2f}",
                 "task_id": None,
+                "translated_text": translated_text,
                 "error": f"音色克隆失败: {str(e)}",
+                "audio_path": str(segmented_audio_path),
+            })
+        except Exception as e:
+            task_results.append({
+                "segment_index": idx + 1,
+                "time_range": f"{start_time:.2f}-{end_time:.2f}",
+                "task_id": None,
+                "translated_text": translated_text,
+                "error": f"音色克隆异常: {str(e)}",
                 "audio_path": str(segmented_audio_path),
             })
     

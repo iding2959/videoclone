@@ -20,7 +20,6 @@ router = APIRouter()
 @router.post("/api/audio/translation-clone")
 async def audio_translation_clone_endpoint(
     audio_file: UploadFile = File(...),
-    prompt_audio: UploadFile = File(...),
     transcription_model: Optional[str] = Form(None),
     transcription_language: Optional[str] = Form(None),
     transcription_response_format: Optional[str] = Form(None),
@@ -42,11 +41,10 @@ async def audio_translation_clone_endpoint(
     1. 音频转录 - 将音频转录为文本，得到 segments 和 duration
     2. 翻译文本 - 对每个 segment 的文本进行翻译
     3. 音频切分 - 根据 segments 切分音频，得到对应的音频段（包括最后多余的一段）
-    4. 音色克隆 - 对每个切分后的音频段，使用对应的翻译文本进行音色克隆
+    4. 音色克隆 - 对每个切分后的音频段，使用该音频段本身作为音色参考，使用对应的翻译文本进行音色克隆
     
     Args:
         audio_file: 要处理的音频文件（必填）
-        prompt_audio: 音色参考音频文件（必填）
         transcription_model: 转录使用的模型（可选，默认使用配置中的模型）
         transcription_language: 转录使用的语言代码（可选，默认使用配置中的语言）
         transcription_response_format: 转录响应格式（可选，默认使用配置中的格式）
@@ -68,9 +66,6 @@ async def audio_translation_clone_endpoint(
     if not audio_file.content_type or not audio_file.content_type.startswith("audio/"):
         raise HTTPException(status_code=400, detail="音频文件必须是音频格式")
     
-    if not prompt_audio.content_type or not prompt_audio.content_type.startswith("audio/"):
-        raise HTTPException(status_code=400, detail="音色参考音频必须是音频文件")
-    
     if emo_audio and (not emo_audio.content_type or not emo_audio.content_type.startswith("audio/")):
         raise HTTPException(status_code=400, detail="情感参考音频必须是音频文件")
     
@@ -78,10 +73,6 @@ async def audio_translation_clone_endpoint(
     audio_file_id = str(uuid.uuid4())
     audio_file_extension = Path(audio_file.filename).suffix if audio_file.filename else ".mp3"
     audio_file_path = Path(tempfile.gettempdir()) / f"{audio_file_id}{audio_file_extension}"
-    
-    prompt_audio_id = str(uuid.uuid4())
-    prompt_audio_extension = Path(prompt_audio.filename).suffix if prompt_audio.filename else ".mp3"
-    prompt_audio_path = Path(tempfile.gettempdir()) / f"{prompt_audio_id}{prompt_audio_extension}"
     
     emo_audio_path = None
     if emo_audio:
@@ -95,10 +86,6 @@ async def audio_translation_clone_endpoint(
             content = await audio_file.read()
             f.write(content)
         
-        with open(prompt_audio_path, "wb") as f:
-            content = await prompt_audio.read()
-            f.write(content)
-        
         if emo_audio and emo_audio_path:
             with open(emo_audio_path, "wb") as f:
                 content = await emo_audio.read()
@@ -107,7 +94,6 @@ async def audio_translation_clone_endpoint(
         # 调用服务层处理业务逻辑
         result = await process_audio_translation_clone(
             audio_file_path=audio_file_path,
-            prompt_audio_path=prompt_audio_path,
             transcription_model=transcription_model,
             transcription_language=transcription_language,
             transcription_response_format=transcription_response_format,
@@ -136,8 +122,6 @@ async def audio_translation_clone_endpoint(
         # 清理临时文件
         if audio_file_path.exists():
             audio_file_path.unlink()
-        if prompt_audio_path.exists():
-            prompt_audio_path.unlink()
         if emo_audio_path and emo_audio_path.exists():
             emo_audio_path.unlink()
 

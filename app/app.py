@@ -16,6 +16,7 @@ from app.routers import (
     audio_merge,
     video_crop,
     video_overlay,
+    video_voice_clone,
 )
 
 
@@ -52,6 +53,7 @@ def create_app() -> FastAPI:
     app.include_router(audio_merge.router)
     app.include_router(video_crop.router)
     app.include_router(video_overlay.router)
+    app.include_router(video_voice_clone.router)
     
     return app
 

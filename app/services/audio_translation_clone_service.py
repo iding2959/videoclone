@@ -290,6 +290,21 @@ async def process_audio_translation_clone(
                 "audio_path": str(segmented_audio_path),
             })
     
+    # 准备用于字幕的数据，保持时间轴顺序
+    subtitle_segments = []
+    for seg in sorted_translated_segments:
+        start = float(seg.get("start", 0))
+        end = float(seg.get("end", 0))
+        if end <= start:
+            continue
+        subtitle_segments.append({
+            "start": start,
+            "end": end,
+            "text": seg.get("text", ""),
+            "translated_text": seg.get("translated_text"),
+            "translation_error": seg.get("translation_error"),
+        })
+
     # 返回结果
     return {
         "message": "音频翻译克隆流程完成",
@@ -303,6 +318,7 @@ async def process_audio_translation_clone(
         "translated_segments": len([s for s in translated_segments if s.get("translated_text")]),
         "cloned_segments": len([r for r in task_results if r.get("task_id")]),
         "tasks": task_results,
+        "subtitle_segments": subtitle_segments,
     }
 
 

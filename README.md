@@ -100,9 +100,24 @@ else:
 
 ```
 pekying/
-├── main.py              # FastAPI 应用主文件
+├── main.py              # 应用入口，负责启动服务
 ├── pyproject.toml       # 项目配置和依赖
 ├── README.md           # 项目说明
+├── app/                 # 应用主目录
+│   ├── __init__.py
+│   ├── app.py          # FastAPI 应用创建和配置
+│   ├── config.py       # 应用配置
+│   ├── routers/        # API 路由模块
+│   │   ├── __init__.py
+│   │   ├── root.py     # 根路由
+│   │   ├── health.py   # 健康检查路由
+│   │   └── extract.py  # 音频提取路由
+│   ├── services/       # 业务逻辑服务
+│   │   ├── __init__.py
+│   │   └── audio_service.py  # 音频提取服务
+│   └── utils/          # 工具函数
+│       ├── __init__.py
+│       └── ffmpeg_utils.py   # FFmpeg 相关工具
 ├── uploads/            # 临时存储上传的视频文件（自动创建）
 └── outputs/            # 存储提取的音频文件（自动创建）
 ```

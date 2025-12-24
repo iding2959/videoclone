@@ -1,6 +1,8 @@
 """
 FastAPI 应用创建
 """
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -20,6 +22,14 @@ from app.routers import (
 )
 
 
+def _setup_logging():
+    """初始化日志配置，确保业务日志可见。"""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
+    )
+
+
 def create_app() -> FastAPI:
     """
     创建并配置 FastAPI 应用
@@ -27,6 +37,7 @@ def create_app() -> FastAPI:
     Returns:
         配置好的 FastAPI 应用实例
     """
+    _setup_logging()
     # 初始化目录
     init_directories()
     

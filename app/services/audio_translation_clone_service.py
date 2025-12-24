@@ -295,13 +295,15 @@ async def process_audio_translation_clone(
     for seg in sorted_translated_segments:
         start = float(seg.get("start", 0))
         end = float(seg.get("end", 0))
-        if end <= start:
+        translated_text = seg.get("translated_text")
+        # 仅当有有效翻译文本时才用于字幕，避免空字幕
+        if end <= start or not translated_text or not str(translated_text).strip():
             continue
         subtitle_segments.append({
             "start": start,
             "end": end,
             "text": seg.get("text", ""),
-            "translated_text": seg.get("translated_text"),
+            "translated_text": translated_text,
             "translation_error": seg.get("translation_error"),
         })
 

@@ -28,7 +28,7 @@ TRANSCRIPTION_DEFAULT_RESPONSE_FORMAT = "verbose_json"
 TRANSLATION_API_URL = "http://192.168.0.214/v1/chat/completions"
 TRANSLATION_API_TOKEN = "gpustack_db6811f08062786a_f9fa57c6db2b89b6297bf749ecddd9bf"
 TRANSLATION_DEFAULT_MODEL = "Hunyuan-MT-Chimera-7B"
-TRANSLATION_DEFAULT_SYSTEM_PROMPT = "你是一名专业的翻译官，将下面文本翻译成简体中文"
+TRANSLATION_DEFAULT_SYSTEM_PROMPT = "你是一名专业的翻译官，将下面文本翻译成英文"
 
 
 def init_directories():

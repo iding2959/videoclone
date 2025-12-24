@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from app.services.transcription_service import transcribe_audio, TranscriptionError
 from app.services.audio_segmentation_service import segment_audio, AudioSegmentationError
+from app.services.translation_service import translate_text, TranslationError
 from app.config import OUTPUT_DIR
 
 router = APIRouter()
@@ -310,4 +311,127 @@ async def download_segments_zip(
         if zip_path.exists():
             zip_path.unlink()
         raise HTTPException(status_code=500, detail=f"创建 ZIP 文件失败: {str(e)}")
+
+
+@router.post("/transcribe-and-translate")
+async def transcribe_and_translate_audio_file(
+    file: UploadFile = File(...),
+    transcription_model: Optional[str] = Form(None),
+    transcription_language: Optional[str] = Form(None),
+    transcription_response_format: Optional[str] = Form(None),
+    translation_model: Optional[str] = Form(None),
+    translation_system_prompt: Optional[str] = Form(None),
+):
+    """
+    上传音频文件，进行转录，然后按段翻译
+    
+    Args:
+        file: 上传的音频文件
+        transcription_model: 转录使用的模型（可选，默认使用配置中的模型）
+        transcription_language: 转录使用的语言代码（可选，默认使用配置中的语言）
+        transcription_response_format: 转录响应格式（可选，默认使用配置中的格式）
+        translation_model: 翻译使用的模型（可选，默认使用配置中的模型）
+        translation_system_prompt: 翻译使用的系统提示词（可选，默认使用配置中的提示词）
+        
+    Returns:
+        包含转录结果和按段翻译结果的字典
+    """
+    # 验证文件类型
+    if not file.content_type or not file.content_type.startswith("audio/"):
+        raise HTTPException(status_code=400, detail="请上传音频文件")
+    
+    # 创建临时文件
+    file_id = str(uuid.uuid4())
+    file_extension = Path(file.filename).suffix if file.filename else ".mp3"
+    temp_file_path = Path(tempfile.gettempdir()) / f"{file_id}{file_extension}"
+    
+    try:
+        # 保存上传的音频文件到临时目录
+        with open(temp_file_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+        
+        # 调用转录服务
+        try:
+            transcription_result = await transcribe_audio(
+                audio_file_path=temp_file_path,
+                model=transcription_model,
+                language=transcription_language,
+                response_format=transcription_response_format,
+            )
+        except TranscriptionError as e:
+            raise HTTPException(status_code=500, detail=f"转录失败: {str(e)}")
+        
+        # 提取 segments
+        segments = transcription_result.get("segments", [])
+        
+        if not segments:
+            raise HTTPException(status_code=400, detail="转录结果中 segments 为空")
+        
+        # 对每个 segment 进行翻译
+        translated_segments = []
+        for idx, segment in enumerate(segments):
+            segment_text = segment.get("text", "").strip()
+            
+            if not segment_text:
+                # 如果 segment 没有文本，保留原始 segment，不添加翻译
+                translated_segments.append({
+                    **segment,
+                    "translated_text": None,
+                    "translation_error": None,
+                })
+                continue
+            
+            try:
+                # 调用翻译服务
+                translation_result = await translate_text(
+                    text=segment_text,
+                    model=translation_model,
+                    system_prompt=translation_system_prompt,
+                )
+                
+                # 从翻译结果中提取翻译文本
+                # 根据返回格式：choices[0].message.content
+                translated_text = None
+                if translation_result.get("choices") and len(translation_result["choices"]) > 0:
+                    message = translation_result["choices"][0].get("message", {})
+                    translated_text = message.get("content", "").strip()
+                
+                # 构建翻译后的 segment
+                translated_segments.append({
+                    **segment,
+                    "translated_text": translated_text,
+                    "translation_error": None,
+                })
+            
+            except TranslationError as e:
+                # 翻译失败时，保留原始 segment，记录错误
+                translated_segments.append({
+                    **segment,
+                    "translated_text": None,
+                    "translation_error": str(e),
+                })
+        
+        # 返回结果
+        return {
+            "transcription": {
+                "text": transcription_result.get("text"),
+                "language": transcription_result.get("language"),
+                "duration": transcription_result.get("duration"),
+                "model": transcription_result.get("model"),
+            },
+            "segments": translated_segments,
+            "total_segments": len(segments),
+            "translated_segments": len([s for s in translated_segments if s.get("translated_text")]),
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
+    
+    finally:
+        # 清理临时文件
+        if temp_file_path.exists():
+            temp_file_path.unlink()
 

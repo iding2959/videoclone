@@ -247,9 +247,22 @@ async def download_segment_file(filename: str):
     except ValueError:
         raise HTTPException(status_code=403, detail="无权访问该文件")
     
+    # 根据文件扩展名确定媒体类型
+    file_extension = Path(filename).suffix.lower()
+    media_types = {
+        ".wav": "audio/wav",
+        ".mp3": "audio/mpeg",
+        ".mpeg": "audio/mpeg",
+        ".ogg": "audio/ogg",
+        ".flac": "audio/flac",
+        ".aac": "audio/aac",
+        ".m4a": "audio/mp4",
+    }
+    media_type = media_types.get(file_extension, "audio/wav")  # 默认为 wav
+    
     return FileResponse(
         path=str(file_path),
-        media_type="audio/mpeg",
+        media_type=media_type,
         filename=filename
     )
 

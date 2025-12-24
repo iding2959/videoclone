@@ -12,10 +12,10 @@ APP_TITLE = "视频音频分离服务"
 APP_VERSION = "0.1.0"
 
 # 音频输出配置
-AUDIO_CODEC = "libmp3lame"
+AUDIO_CODEC = "pcm_s16le"  # WAV 格式使用 PCM 16-bit little-endian
 AUDIO_CHANNELS = 2
 AUDIO_SAMPLE_RATE = "44100"
-AUDIO_FORMAT = "mp3"
+AUDIO_FORMAT = "wav"
 
 # 音频转录 API 配置
 TRANSCRIPTION_API_URL = "http://192.168.0.214/v1/audio/transcriptions"

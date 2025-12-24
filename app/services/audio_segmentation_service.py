@@ -75,7 +75,7 @@ def segment_audio(
         
         # 对每个时间段进行切分
         for idx, (start_time, end_time) in enumerate(time_segments, 1):
-            output_filename = f"{audio_stem}_segment_{idx}.mp3"
+            output_filename = f"{audio_stem}_segment_{idx}.wav"
             output_path = output_dir / output_filename
             
             # 使用 ffmpeg 切分音频

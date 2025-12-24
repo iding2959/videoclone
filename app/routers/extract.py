@@ -32,7 +32,7 @@ async def extract_audio_from_video(file: UploadFile = File(...)):
     file_id = str(uuid.uuid4())
     video_extension = Path(file.filename).suffix if file.filename else ".mp4"
     video_path = UPLOAD_DIR / f"{file_id}{video_extension}"
-    audio_path = OUTPUT_DIR / f"{file_id}.mp3"
+    audio_path = OUTPUT_DIR / f"{file_id}.wav"
     
     try:
         # 保存上传的视频文件
@@ -50,8 +50,8 @@ async def extract_audio_from_video(file: UploadFile = File(...)):
         # 返回音频文件
         return FileResponse(
             path=str(audio_path),
-            media_type="audio/mpeg",
-            filename=f"{Path(file.filename).stem if file.filename else 'audio'}.mp3"
+            media_type="audio/wav",
+            filename=f"{Path(file.filename).stem if file.filename else 'audio'}.wav"
         )
     
     except AudioExtractionError as e:

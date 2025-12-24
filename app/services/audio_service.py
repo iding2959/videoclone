@@ -35,7 +35,7 @@ def extract_audio(video_path: Path, output_path: Path) -> Path:
         )
     
     try:
-        # 使用 ffmpeg 提取音频，输出为 MP3 格式
+        # 使用 ffmpeg 提取音频，输出为 WAV 格式
         stream = ffmpeg.input(str(video_path))
         stream = ffmpeg.output(
             stream,

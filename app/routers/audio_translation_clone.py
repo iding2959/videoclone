@@ -8,7 +8,9 @@ import uuid
 from pathlib import Path
 from typing import Optional, List
 
-from fastapi import APIRouter, File, UploadFile, HTTPException, Form
+from fastapi import APIRouter, File, UploadFile, HTTPException, Form, Body
+from pydantic import BaseModel, Field
+from typing import Optional, List, Dict, Any, Union
 
 from app.services.audio_translation_clone_service import (
     process_audio_translation_clone,
@@ -128,34 +130,62 @@ async def audio_translation_clone_endpoint(
             emo_audio_path.unlink()
 
 
+class TaskQueryRequest(BaseModel):
+    """任务查询请求模型"""
+    # 方式1: 直接传入完整的返回结果，自动提取 task_id
+    tasks: Optional[List[Dict[str, Any]]] = Field(None, description="从 /api/audio/translation-clone 返回的 tasks 数组")
+    # 方式2: 直接传入 task_id 列表
+    task_ids: Optional[List[str]] = Field(None, description="任务ID列表")
+    # 方式3: 传入单个 task_id
+    task_id: Optional[str] = Field(None, description="单个任务ID")
+
+
 @router.post("/api/audio/translation-clone/query-tasks")
 async def query_clone_tasks_status(
-    task_ids: str = Form(...),
+    request: TaskQueryRequest = Body(...),
 ):
     """
-    批量查询音色克隆任务状态
+    查询音色克隆任务状态（优化版）
+    
+    支持多种方式传入任务ID：
+    1. 传入完整的 tasks 数组（从 /api/audio/translation-clone 返回），自动提取 task_id
+    2. 直接传入 task_id 列表
+    3. 传入单个 task_id
     
     查询多个任务的状态和结果。任务完成后，从返回的 result 中获取音频地址。
     
     Args:
-        task_ids: 任务ID列表的JSON字符串，例如 ["task_id_1", "task_id_2", "task_id_3"]
+        request: 查询请求，包含以下字段之一：
+            - tasks: 从 /api/audio/translation-clone 返回的 tasks 数组
+            - task_ids: 任务ID列表
+            - task_id: 单个任务ID
         
     Returns:
         包含所有任务状态和结果的字典
     """
     try:
-        # 解析任务ID列表
-        try:
-            task_id_list = json.loads(task_ids)
-            if not isinstance(task_id_list, list):
-                raise ValueError("task_ids 必须是数组")
-        except json.JSONDecodeError as e:
-            raise HTTPException(status_code=400, detail=f"任务ID列表格式错误: {str(e)}")
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+        task_id_list = []
+        
+        # 方式1: 从 tasks 数组中提取 task_id
+        if request.tasks:
+            for task in request.tasks:
+                task_id = task.get("task_id")
+                if task_id:
+                    task_id_list.append(task_id)
+        
+        # 方式2: 直接使用 task_ids
+        if request.task_ids:
+            task_id_list.extend(request.task_ids)
+        
+        # 方式3: 单个 task_id
+        if request.task_id:
+            task_id_list.append(request.task_id)
         
         if not task_id_list:
-            raise HTTPException(status_code=400, detail="任务ID列表不能为空")
+            raise HTTPException(status_code=400, detail="未提供有效的任务ID。请提供 tasks、task_ids 或 task_id 之一")
+        
+        # 去重
+        task_id_list = list(set(task_id_list))
         
         # 批量查询任务状态
         results = []
@@ -203,7 +233,7 @@ async def query_clone_tasks_status(
 @router.get("/api/audio/translation-clone/task/{task_id}")
 async def query_single_clone_task_status(task_id: str):
     """
-    查询单个音色克隆任务状态
+    查询单个音色克隆任务状态（兼容旧接口）
     
     查询单个任务的状态和结果。任务完成后，从返回的 result 中获取音频地址。
     

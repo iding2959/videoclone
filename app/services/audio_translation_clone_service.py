@@ -233,15 +233,25 @@ async def process_audio_translation_clone(
                 emo_audio_path=emo_audio_path,
             )
             
-            task_id = result.get("task_id")
+            # 尝试从不同可能的字段名中提取 task_id
+            task_id = (
+                result.get("task_id") or 
+                result.get("taskId") or 
+                result.get("id") or 
+                result.get("task") or
+                (result.get("data", {}).get("task_id") if isinstance(result.get("data"), dict) else None) or
+                (result.get("data", {}).get("taskId") if isinstance(result.get("data"), dict) else None)
+            )
+            
             if not task_id:
-                # 如果 task_id 为空，记录错误信息
-                # 即使 API 返回了成功消息，如果没有 task_id，也应该视为错误
+                # 如果 task_id 为空，记录完整的响应信息以便调试
                 api_message = result.get("message") or result.get("error") or ""
+                # 记录完整的响应（但限制长度，避免日志过大）
+                result_str = str(result)[:500]  # 只记录前500个字符
                 if api_message and "成功" in api_message:
-                    error_msg = f"音色克隆API返回成功但task_id为空: {api_message}"
+                    error_msg = f"音色克隆API返回成功但task_id为空。响应内容: {result_str}"
                 else:
-                    error_msg = api_message or "音色克隆API返回的task_id为空"
+                    error_msg = api_message or f"音色克隆API返回的task_id为空。响应内容: {result_str}"
                 task_results.append({
                     "segment_index": idx + 1,
                     "time_range": f"{start_time:.2f}-{end_time:.2f}",
@@ -249,6 +259,7 @@ async def process_audio_translation_clone(
                     "translated_text": translated_text,
                     "error": error_msg,
                     "audio_path": str(segmented_audio_path),
+                    "api_response": result,  # 添加完整响应以便调试
                 })
             else:
                 task_results.append({

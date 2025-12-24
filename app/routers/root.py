@@ -16,6 +16,7 @@ async def root():
         "version": APP_VERSION,
         "endpoints": {
             "POST /extract": "上传视频文件，提取音频",
+            "POST /transcribe": "上传音频文件，进行转录",
             "GET /health": "健康检查"
         }
     }

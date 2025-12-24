@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import APP_TITLE, APP_VERSION, init_directories
-from app.routers import root, health, extract, transcription, translation
+from app.routers import root, health, extract, transcription, translation, tts
 
 
 def create_app() -> FastAPI:
@@ -36,6 +36,7 @@ def create_app() -> FastAPI:
     app.include_router(extract.router)
     app.include_router(transcription.router)
     app.include_router(translation.router)
+    app.include_router(tts.router)
     
     return app
 

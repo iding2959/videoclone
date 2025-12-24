@@ -50,6 +50,42 @@ def _build_drawtext_filter(
     return "drawtext=" + ":".join(parts)
 
 
+def _wrap_text(text: str, max_chars: int) -> str:
+    """
+    根据最大字符数粗略换行，优先按空格/标点拆分，否则硬切。
+    """
+    if max_chars <= 0:
+        return text
+    words = []
+    current = ""
+    for ch in text:
+        if len(current) >= max_chars:
+            words.append(current)
+            current = ""
+        # 如果是空格/中文标点/英文标点，尝试作为断点
+        if ch in [" ", ",", ".", "，", "。", "！", "？", "!", "?", ";", "；"]:
+            current += ch
+            words.append(current)
+            current = ""
+        else:
+            current += ch
+    if current:
+        words.append(current)
+
+    lines = []
+    line = ""
+    for token in words:
+        if len(line) + len(token) <= max_chars:
+            line += token
+        else:
+            if line:
+                lines.append(line)
+            line = token
+    if line:
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def overlay_title_and_subtitles(
     video_path: Path,
     output_path: Optional[Path],
@@ -96,17 +132,17 @@ def overlay_title_and_subtitles(
         if title_block_height <= 0 or subtitle_block_height <= 0:
             raise VideoOverlayError("标题/字幕块高度必须大于 0")
 
-        # 添加黑色区域：顶部和底部
-        box_filters = [
-            f"drawbox=x=0:y=0:w=iw:h={title_block_height}:color=black@0.6:t=fill",
-            f"drawbox=x=0:y=ih-{subtitle_block_height}:w=iw:h={subtitle_block_height}:color=black@0.6:t=fill",
-        ]
+        # 不再绘制整块黑色遮罩，仅根据块高度计算文字位置
+        box_filters = []
 
         # 标题字体和位置（在顶部块内垂直居中）
         title_fontsize = title_font_size or max(18, int(height * 0.04))
+        # 估算单行最大字符数，防止过长缺失
+        max_title_chars = max(8, int(width / max(1, title_fontsize * 0.55)))
+        wrapped_title = _wrap_text(title_text, max_title_chars)
         title_y = max(0, (title_block_height - title_fontsize) // 2)
         title_filter = _build_drawtext_filter(
-            text=title_text,
+            text=wrapped_title,
             x="(w-text_w)/2",
             y=str(title_y),
             start=0,
@@ -127,9 +163,11 @@ def overlay_title_and_subtitles(
             start = float(seg.get("start", 0))
             end = float(seg.get("end", start + 2.0))
             text = str(seg.get("translated_text") or seg.get("text") or "")
+            max_sub_chars = max(8, int(width / max(1, subtitle_fontsize * 0.55)))
+            wrapped_text = _wrap_text(text, max_sub_chars)
             subtitle_filters.append(
                 _build_drawtext_filter(
-                    text=text,
+                    text=wrapped_text,
                     x="(w-text_w)/2",
                     y=subtitle_y,
                     start=start,

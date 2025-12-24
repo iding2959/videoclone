@@ -55,12 +55,9 @@ async def transcribe_audio(
         raise TranscriptionError("转录 API Token 未配置，请在 config.py 中设置 TRANSCRIPTION_API_TOKEN")
     
     # 准备请求头（不包含 Content-Type，让 httpx 自动设置 multipart/form-data）
-    # 匹配 curl 命令中的关键 headers
     headers = {
-        "User-Agent": "Apifox/1.0.0 (https://apifox.com)",
         "Authorization": f"Bearer {TRANSCRIPTION_API_TOKEN.strip()}",
         "Accept": "*/*",
-        # 注意：Host 和 Connection 由 httpx 自动处理，不需要手动设置
     }
     
     # 读取文件内容
@@ -69,12 +66,11 @@ async def transcribe_audio(
     
     # 准备 multipart/form-data
     # 使用 files 和 data 参数，httpx 会自动处理 multipart 格式
-    # 注意：httpx 会自动处理 Content-Type 和 boundary
     files = {
         "file": (audio_file_path.name, file_content, "audio/mpeg"),
     }
     
-    # 表单数据（字符串值，httpx 会自动处理）
+    # 表单数据（字符串值，不需要引号）
     data = {
         "model": model,
         "language": language,

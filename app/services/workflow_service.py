@@ -194,18 +194,18 @@ async def process_audio_translation_clone(
                 "translation_error": str(e),
             })
     
-    logger.info("=" * 80)
-    logger.info("转录翻译完成，结果如下：")
-    logger.info("转录总文本: %s", transcription_result.get("text", ""))
-    logger.info("语言: %s, 时长: %.2f秒, 模型: %s", 
+    logger.debug("=" * 80)
+    logger.debug("转录翻译完成，结果如下：")
+    logger.debug("转录总文本: {}", transcription_result.get("text", ""))
+    logger.debug("语言: {}, 时长: {:.2f}秒, 模型: {}", 
                 transcription_result.get("language", ""),
                 transcription_result.get("duration", 0),
                 transcription_result.get("model", ""))
-    logger.info("总段数: %d, 已翻译段数: %d", 
+    logger.debug("总段数: {}, 已翻译段数: {}", 
                 len(segments),
                 len([s for s in translated_segments if s.get("translated_text")]))
-    logger.info("-" * 80)
-    logger.info("分段详情:")
+    logger.debug("-" * 80)
+    logger.debug("分段详情:")
     for idx, seg in enumerate(translated_segments, 1):
         start = seg.get("start", 0)
         end = seg.get("end", 0)
@@ -213,13 +213,13 @@ async def process_audio_translation_clone(
         translated_text = seg.get("translated_text", "")
         translation_error = seg.get("translation_error")
         
-        logger.info("  段 %d: [%.2f - %.2f]", idx, start, end)
-        logger.info("    原文: %s", text)
+        logger.debug("  段 {}: [{:.2f} - {:.2f}]", idx, start, end)
+        logger.debug("    原文: {}", text)
         if translated_text:
-            logger.info("    翻译: %s", translated_text)
+            logger.debug("    翻译: {}", translated_text)
         else:
-            logger.info("    翻译: (无) %s", f"错误: {translation_error}" if translation_error else "")
-    logger.info("=" * 80)
+            logger.debug("    翻译: (无) {}", f"错误: {translation_error}" if translation_error else "")
+    logger.debug("=" * 80)
     
     try:
         logger.info("步骤3: 开始音频切分...")
@@ -353,8 +353,8 @@ async def process_audio_translation_clone(
     
     subtitle_segments.sort(key=lambda x: x.get("start", 0))
     
-    logger.info(
-        "字幕段生成完成: 从 %d 个翻译段中提取了 %d 个字幕段（总转录段数: %d）",
+    logger.debug(
+        "字幕段生成完成: 从 {} 个翻译段中提取了 {} 个字幕段（总转录段数: {}）",
         len(sorted_translated_segments),
         len(subtitle_segments),
         len(segments)
@@ -408,22 +408,22 @@ async def _replace_video_audio(
         if audio_duration <= 0:
             raise VideoVoiceCloneError("无法获取音频时长")
         
-        logger.info("视频时长: %.2f秒, 音频时长: %.2f秒", video_duration, audio_duration)
+        logger.debug("视频时长: {:.2f}秒, 音频时长: {:.2f}秒", video_duration, audio_duration)
         
         video_input = ffmpeg.input(str(video_path))
         audio_input = ffmpeg.input(str(audio_path))
         
         if abs(audio_duration - video_duration) < 0.1:
-            logger.info("音频和视频时长匹配，无需调整")
+            logger.debug("音频和视频时长匹配，无需调整")
             processed_audio = audio_input["a"]
             tempo_ratio = 1.0
         else:
             tempo_ratio = audio_duration / video_duration
             
             if tempo_ratio > 1.0:
-                logger.info("音频比视频长 %.2f秒，加速音频 %.2fx 倍", audio_duration - video_duration, tempo_ratio)
+                logger.debug("音频比视频长 {:.2f}秒，加速音频 {:.2f}x 倍", audio_duration - video_duration, tempo_ratio)
             else:
-                logger.info("音频比视频短 %.2f秒，减速音频 %.2fx 倍", video_duration - audio_duration, tempo_ratio)
+                logger.debug("音频比视频短 {:.2f}秒，减速音频 {:.2f}x 倍", video_duration - audio_duration, tempo_ratio)
             
             processed_audio = audio_input["a"]
             
@@ -454,7 +454,7 @@ async def _replace_video_audio(
             shortest=None,
         )
         ffmpeg.run(stream, overwrite_output=True, quiet=True)
-        logger.info("音轨替换完成 -> 输出: %s, 速度调整比例: %.4f", output_path, tempo_ratio)
+        logger.debug("音轨替换完成 -> 输出: {}, 速度调整比例: {:.4f}", output_path, tempo_ratio)
         return output_path, tempo_ratio
     except ffmpeg.Error as e:
         detail = e.stderr.decode() if e.stderr else str(e)
@@ -501,11 +501,11 @@ async def _collect_and_merge_clone_audios(
             if audio_path_str:
                 tail_audio_tasks.append((seg_idx, audio_path_str))
             else:
-                logger.warning("尾段 segment_%d 没有 audio_path", seg_idx)
+                logger.warning("尾段 segment_{} 没有 audio_path", seg_idx)
         elif translated_text and translated_text.strip():
             clone_failed_tasks.append((seg_idx, error or "克隆失败：未获取到 task_id"))
         elif audio_path_str:
-            logger.warning("segment_%d 没有 task_id 也没有明确的错误信息，使用原始音频", seg_idx)
+            logger.warning("segment_{} 没有 task_id 也没有明确的错误信息，使用原始音频", seg_idx)
             tail_audio_tasks.append((seg_idx, audio_path_str))
 
     if clone_failed_tasks:
@@ -514,12 +514,12 @@ async def _collect_and_merge_clone_audios(
         logger.error(error_msg)
         raise VideoVoiceCloneError(error_msg)
 
-    logger.info("开始收集克隆任务音频，克隆段数: %d, 尾段数: %d", len(clone_task_info), len(tail_audio_tasks))
+    logger.debug("开始收集克隆任务音频，克隆段数: {}, 尾段数: {}", len(clone_task_info), len(tail_audio_tasks))
 
     audio_files_dict = {}
 
     if clone_task_info:
-        logger.info("等待并下载克隆音频，轮询间隔: %.1fs，超时: %.1fs", query_interval, max_wait_time)
+        logger.debug("等待并下载克隆音频，轮询间隔: {:.1f}s，超时: {:.1f}s", query_interval, max_wait_time)
         cloned_audio_files = await wait_and_download_cloned_audios(
             task_info_list=clone_task_info,
             query_interval=query_interval,
@@ -533,15 +533,15 @@ async def _collect_and_merge_clone_audios(
         
         for i, (task_id, seg_idx) in enumerate(clone_task_info):
             audio_files_dict[seg_idx] = cloned_audio_files[i]
-            logger.debug("克隆音频 segment_%d -> %s", seg_idx, cloned_audio_files[i])
+            logger.debug("克隆音频 segment_{} -> {}", seg_idx, cloned_audio_files[i])
 
     for seg_idx, audio_path_str in tail_audio_tasks:
         audio_path = Path(audio_path_str)
         if audio_path.exists():
             audio_files_dict[seg_idx] = audio_path
-            logger.debug("使用尾段原始音频 segment_%d -> %s", seg_idx, audio_path)
+            logger.debug("使用尾段原始音频 segment_{} -> {}", seg_idx, audio_path)
         else:
-            logger.info("下载尾段原始音频 segment_%d: %s", seg_idx, audio_path.name)
+            logger.debug("下载尾段原始音频 segment_{}: {}", seg_idx, audio_path.name)
             downloaded = await download_segment_file(audio_path.name, base_url)
             audio_files_dict[seg_idx] = downloaded
 
@@ -552,9 +552,9 @@ async def _collect_and_merge_clone_audios(
     cloned_audio_files = [audio_files_dict[idx] for idx in sorted_segments]
 
     try:
-        logger.info("开始合并 %d 段音频（按 segment_index 顺序）", len(cloned_audio_files))
+        logger.debug("开始合并 {} 段音频（按 segment_index 顺序）", len(cloned_audio_files))
         merged_audio_path = await merge_audio_files(cloned_audio_files)
-        logger.info("音频合并完成 -> %s", merged_audio_path)
+        logger.debug("音频合并完成 -> {}", merged_audio_path)
     except AudioMergeError as e:
         raise VideoVoiceCloneError(str(e))
 
@@ -586,12 +586,12 @@ async def process_video_voice_clone_audio_only(
     final_video_path = OUTPUT_DIR / f"voice_clone_{uuid.uuid4().hex}{video_path.suffix}"
 
     try:
-        logger.info("步骤1: 提取视频音频 -> %s", temp_audio_path)
+        logger.info("步骤1: 提取视频音频 -> {}", temp_audio_path)
         await asyncio.to_thread(extract_audio, video_path, temp_audio_path)
 
         logger.info("步骤2: 调用音频翻译克隆流程（仅替换音轨）")
         clone_result = await process_audio_translation_clone(audio_file_path=temp_audio_path)
-        logger.info("克隆任务数: %d", len(clone_result.get("tasks", [])))
+        logger.info("克隆任务数: {}", len(clone_result.get("tasks", [])))
 
         logger.info("步骤3: 下载并合并克隆音频（仅替换音轨）")
         merged_audio_path = await _collect_and_merge_clone_audios(
@@ -604,7 +604,7 @@ async def process_video_voice_clone_audio_only(
         logger.info("步骤4: 替换视频音轨（不裁剪，不叠字幕）")
         _, tempo_ratio = await _replace_video_audio(video_path, merged_audio_path, final_video_path)
 
-        logger.info("流程完成，输出视频: %s", final_video_path)
+        logger.info("流程完成，输出视频: {}", final_video_path)
         return {
             "video_path": final_video_path,
             "clone_result": clone_result,
@@ -662,17 +662,17 @@ async def process_video_voice_clone(
     final_video_path = OUTPUT_DIR / f"voice_clone_overlay_{uuid.uuid4().hex}{video_path.suffix}"
 
     try:
-        logger.info("步骤1: 提取视频音频 -> %s", temp_audio_path)
+        logger.info("步骤1: 提取视频音频 -> {}", temp_audio_path)
         await asyncio.to_thread(extract_audio, video_path, temp_audio_path)
 
         logger.info("步骤2: 调用音频翻译克隆流程（转录+翻译）")
         clone_result = await process_audio_translation_clone(audio_file_path=temp_audio_path)
         original_subtitle_segments = clone_result.get("subtitle_segments", [])
-        logger.info("步骤2完成: 克隆任务数: %d，字幕段数: %d", len(clone_result.get("tasks", [])), len(original_subtitle_segments))
+        logger.info("步骤2完成: 克隆任务数: {}，字幕段数: {}", len(clone_result.get("tasks", [])), len(original_subtitle_segments))
         
-        logger.info("字幕段详情:")
+        logger.debug("字幕段详情:")
         for idx, seg in enumerate(original_subtitle_segments, 1):
-            logger.info("  字幕段 %d: [%.2f - %.2f] %s", 
+            logger.debug("  字幕段 {}: [{:.2f} - {:.2f}] {}", 
                        idx, seg.get("start", 0), seg.get("end", 0), seg.get("translated_text", ""))
 
         logger.info("步骤3: 下载并合并克隆音频")
@@ -702,9 +702,9 @@ async def process_video_voice_clone(
 
         logger.info("步骤6: 音频已调整以匹配视频时长，字幕时间保持原始时间不变")
         adjusted_subtitle_segments = original_subtitle_segments
-        logger.info("保持原字幕段数: %d", len(adjusted_subtitle_segments))
+        logger.debug("保持原字幕段数: {}", len(adjusted_subtitle_segments))
 
-        logger.info("步骤7: 固定裁剪视频 top=%d bottom=%d", top_cut, bottom_cut)
+        logger.info("步骤7: 固定裁剪视频 top={} bottom={}", top_cut, bottom_cut)
         await asyncio.to_thread(
             detect_and_crop_video,
             replaced_video_path,
@@ -713,7 +713,7 @@ async def process_video_voice_clone(
             bottom_cut,
         )
 
-        logger.info("步骤8: 重新叠加标题与字幕（使用原始字幕时间），标题: %s", title_text)
+        logger.info("步骤8: 重新叠加标题与字幕（使用原始字幕时间），标题: {}", title_text)
         await asyncio.to_thread(
             overlay_title_and_subtitles,
             cropped_video_path,
@@ -727,7 +727,7 @@ async def process_video_voice_clone(
             fontfile,
         )
 
-        logger.info("流程完成，输出视频: %s", final_video_path)
+        logger.info("流程完成，输出视频: {}", final_video_path)
         return {
             "video_path": final_video_path,
             "subtitle_segments": adjusted_subtitle_segments,

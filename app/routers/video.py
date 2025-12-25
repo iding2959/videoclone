@@ -241,7 +241,7 @@ async def video_voice_clone_overlay(
     raw_video_path = UPLOAD_DIR / f"{file_id}{extension}"
 
     try:
-        logger.info("收到 /video/voice-clone-overlay 请求，文件: %s, 标题: %s", file.filename, title_text)
+        logger.debug("收到 /video/voice-clone-overlay 请求，文件: {}, 标题: {}", file.filename, title_text)
         content = await file.read()
         with open(raw_video_path, "wb") as f:
             f.write(content)
@@ -255,17 +255,17 @@ async def video_voice_clone_overlay(
         if not final_path.exists():
             raise HTTPException(status_code=500, detail="处理失败，未生成输出文件")
 
-        logger.info("处理完成，返回文件: %s", final_path)
+        logger.debug("处理完成，返回文件: {}", final_path)
         return FileResponse(
             path=str(final_path),
             media_type=file.content_type or "video/mp4",
             filename=f"{Path(file.filename).stem if file.filename else 'video'}_voice_clone_overlay{extension}",
         )
     except VideoVoiceCloneError as e:
-        logger.error("处理失败 VideoVoiceCloneError: %s", e)
+        logger.error("处理失败 VideoVoiceCloneError: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
-        logger.exception("处理失败: %s", e)
+        logger.exception("处理失败: {}", e)
         raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
     finally:
         if raw_video_path.exists():
@@ -290,7 +290,7 @@ async def video_voice_clone(
     raw_video_path = UPLOAD_DIR / f"{file_id}{extension}"
 
     try:
-        logger.info("收到 /video/voice-clone 请求，文件: %s", file.filename)
+        logger.debug("收到 /video/voice-clone 请求，文件: {}", file.filename)
         content = await file.read()
         with open(raw_video_path, "wb") as f:
             f.write(content)
@@ -301,17 +301,17 @@ async def video_voice_clone(
         if not final_path.exists():
             raise HTTPException(status_code=500, detail="处理失败，未生成输出文件")
 
-        logger.info("处理完成，返回文件: %s", final_path)
+        logger.debug("处理完成，返回文件: {}", final_path)
         return FileResponse(
             path=str(final_path),
             media_type=file.content_type or "video/mp4",
             filename=f"{Path(file.filename).stem if file.filename else 'video'}_voice_clone{extension}",
         )
     except VideoVoiceCloneError as e:
-        logger.error("处理失败 VideoVoiceCloneError: %s", e)
+        logger.error("处理失败 VideoVoiceCloneError: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
-        logger.exception("处理失败: %s", e)
+        logger.exception("处理失败: {}", e)
         raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
     finally:
         if raw_video_path.exists():

@@ -6,6 +6,7 @@ from pathlib import Path
 # 目录配置
 UPLOAD_DIR = Path("uploads")
 OUTPUT_DIR = Path("outputs")
+LOG_DIR = Path("logs")
 
 # 应用配置
 APP_TITLE = "视频音频分离服务"
@@ -36,9 +37,17 @@ TTS_SYNTHESIZE_ASYNC_URL = f"{TTS_API_BASE_URL}/api/tts/synthesize-async"
 TTS_TASK_QUERY_URL = f"{TTS_API_BASE_URL}/api/tts/task"
 TTS_DOWNLOAD_URL = f"{TTS_API_BASE_URL}/api/tts/download"
 
+# 日志配置
+LOG_CONSOLE_LEVEL = "INFO"  # 控制台输出日志级别：INFO（控制台只显示INFO及以上级别）
+LOG_FILE_LEVEL = "DEBUG"  # 文件保存日志级别：DEBUG（文件保存所有DEBUG及以上级别）
+LOG_ROTATION = "00:00"  # 每天午夜切分日志
+LOG_RETENTION_DAYS = 30  # 保留30天内的日志
+LOG_ENCODING = "utf-8"  # 日志文件编码
+
 
 def init_directories():
     """初始化必要的目录"""
     UPLOAD_DIR.mkdir(exist_ok=True)
     OUTPUT_DIR.mkdir(exist_ok=True)
+    LOG_DIR.mkdir(exist_ok=True)
 

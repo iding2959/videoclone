@@ -12,4 +12,5 @@ dependencies = [
     "httpx>=0.25.0",
     "opencv-python-headless>=4.10.0.84",
     "numpy>=1.26.0",
+    "loguru>=0.7.0",
 ]

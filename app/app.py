@@ -1,12 +1,11 @@
 """
 FastAPI 应用创建
 """
-import logging
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import APP_TITLE, APP_VERSION, init_directories
+from app.utils import logger  # 导入 loguru 日志系统，确保在应用启动时初始化
 from app.routers import (
     root,
     health,
@@ -22,14 +21,6 @@ from app.routers import (
 )
 
 
-def _setup_logging():
-    """初始化日志配置，确保业务日志可见。"""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
-    )
-
-
 def create_app() -> FastAPI:
     """
     创建并配置 FastAPI 应用
@@ -37,7 +28,9 @@ def create_app() -> FastAPI:
     Returns:
         配置好的 FastAPI 应用实例
     """
-    _setup_logging()
+    # 日志系统已在导入时自动初始化（app.utils.logger）
+    logger.info("正在初始化 FastAPI 应用...")
+    
     # 初始化目录
     init_directories()
     

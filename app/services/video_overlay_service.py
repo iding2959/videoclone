@@ -159,6 +159,7 @@ def overlay_title_and_subtitles(
         # 这样可以确保所有 drawtext 过滤器都能正确应用
         stream = ffmpeg.input(str(video_path))
         video = stream["v"]
+        audio = stream["a"]  # 保留音频流
         
         # 先应用标题过滤器（全程显示）
         video_duration = float(video_stream.get("duration", 1e6))
@@ -221,8 +222,10 @@ def overlay_title_and_subtitles(
             subtitle_count += 1
         logger.info("字幕叠加完成，共添加 %d 个字幕过滤器（标题 + %d 个字幕）", subtitle_count + 1, subtitle_count)
         
+        # 同时输出视频和音频流
         stream = ffmpeg.output(
             video,
+            audio,
             str(out_path),
             vcodec="libx264",
             acodec="copy",

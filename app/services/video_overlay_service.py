@@ -1,6 +1,7 @@
 """
 视频文字叠加服务：在指定高度区域添加标题与逐段字幕。
 """
+import logging
 from pathlib import Path
 import uuid
 from typing import List, Optional, Dict, Any
@@ -9,6 +10,8 @@ import ffmpeg
 
 from app.config import OUTPUT_DIR
 from app.utils.ffmpeg_utils import check_ffmpeg_available, get_ffmpeg_install_hint
+
+logger = logging.getLogger(__name__)
 
 
 class VideoOverlayError(Exception):
@@ -168,12 +171,17 @@ def overlay_title_and_subtitles(
         subtitle_filters = []
         subtitle_fontsize = subtitle_font_size or max(16, int(height * 0.035))
         subtitle_y = f"(h-{subtitle_block_height}+({subtitle_block_height}-text_h)/2)"
-        for seg in subtitle_segments:
+        logger.info("开始叠加字幕，共 %d 个字幕段", len(subtitle_segments))
+        for idx, seg in enumerate(subtitle_segments, 1):
             start = float(seg.get("start", 0))
             end = float(seg.get("end", start + 2.0))
             text = str(seg.get("translated_text") or seg.get("text") or "")
+            if not text.strip():
+                logger.warning("字幕段 %d [%.2f-%.2f] 文本为空，跳过", idx, start, end)
+                continue
             max_sub_chars = max(8, int(width / max(1, subtitle_fontsize * 0.55)))
             wrapped_text = _wrap_text(text, max_sub_chars)
+            logger.debug("添加字幕段 %d: [%.2f-%.2f] %s", idx, start, end, text[:50])
             subtitle_filters.append(
                 _build_drawtext_filter(
                     text=wrapped_text,
@@ -189,6 +197,7 @@ def overlay_title_and_subtitles(
                     fontfile=fontfile,
                 )
             )
+        logger.info("字幕叠加完成，共添加 %d 个字幕过滤器", len(subtitle_filters))
 
         vf_chain = ",".join(box_filters + [title_filter] + subtitle_filters)
         stream = ffmpeg.input(str(video_path))

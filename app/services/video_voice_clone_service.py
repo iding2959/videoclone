@@ -416,10 +416,16 @@ async def process_video_voice_clone(
         await asyncio.to_thread(extract_audio, video_path, temp_audio_path)
 
         # 2. 音频翻译克隆，获取字幕
-        logger.info("步骤2: 调用音频翻译克隆流程")
+        logger.info("步骤2: 调用音频翻译克隆流程（转录+翻译）")
         clone_result = await process_audio_translation_clone(audio_file_path=temp_audio_path)
         original_subtitle_segments = clone_result.get("subtitle_segments", [])
-        logger.info("克隆任务数: %d，字幕段数: %d", len(clone_result.get("tasks", [])), len(original_subtitle_segments))
+        logger.info("步骤2完成: 克隆任务数: %d，字幕段数: %d", len(clone_result.get("tasks", [])), len(original_subtitle_segments))
+        
+        # 打印字幕段详情
+        logger.info("字幕段详情:")
+        for idx, seg in enumerate(original_subtitle_segments, 1):
+            logger.info("  字幕段 %d: [%.2f - %.2f] %s", 
+                       idx, seg.get("start", 0), seg.get("end", 0), seg.get("translated_text", ""))
 
         # 3. 下载并合并克隆音频
         logger.info("步骤3: 下载并合并克隆音频")
@@ -453,9 +459,14 @@ async def process_video_voice_clone(
         if abs(tempo_ratio - 1.0) > 0.01:
             logger.info("步骤6: 根据速度调整比例 %.4f 调整字幕时间", tempo_ratio)
             adjusted_subtitle_segments = _adjust_subtitle_timing(original_subtitle_segments, tempo_ratio)
+            logger.info("调整后的字幕段数: %d", len(adjusted_subtitle_segments))
+            for idx, seg in enumerate(adjusted_subtitle_segments, 1):
+                logger.info("  调整后字幕段 %d: [%.2f - %.2f] %s", 
+                           idx, seg.get("start", 0), seg.get("end", 0), seg.get("translated_text", "")[:50])
         else:
             logger.info("步骤6: 音频速度未调整，字幕时间保持不变")
             adjusted_subtitle_segments = original_subtitle_segments
+            logger.info("保持原字幕段数: %d", len(adjusted_subtitle_segments))
 
         # 7. 固定裁剪
         logger.info("步骤7: 固定裁剪视频 top=%d bottom=%d", top_cut, bottom_cut)

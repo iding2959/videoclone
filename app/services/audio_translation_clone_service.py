@@ -135,6 +135,34 @@ async def process_audio_translation_clone(
                 "translation_error": str(e),
             })
     
+    # 打印转录翻译结果
+    logger.info("=" * 80)
+    logger.info("转录翻译完成，结果如下：")
+    logger.info("转录总文本: %s", transcription_result.get("text", ""))
+    logger.info("语言: %s, 时长: %.2f秒, 模型: %s", 
+                transcription_result.get("language", ""),
+                transcription_result.get("duration", 0),
+                transcription_result.get("model", ""))
+    logger.info("总段数: %d, 已翻译段数: %d", 
+                len(segments),
+                len([s for s in translated_segments if s.get("translated_text")]))
+    logger.info("-" * 80)
+    logger.info("分段详情:")
+    for idx, seg in enumerate(translated_segments, 1):
+        start = seg.get("start", 0)
+        end = seg.get("end", 0)
+        text = seg.get("text", "")
+        translated_text = seg.get("translated_text", "")
+        translation_error = seg.get("translation_error")
+        
+        logger.info("  段 %d: [%.2f - %.2f]", idx, start, end)
+        logger.info("    原文: %s", text)
+        if translated_text:
+            logger.info("    翻译: %s", translated_text)
+        else:
+            logger.info("    翻译: (无) %s", f"错误: {translation_error}" if translation_error else "")
+    logger.info("=" * 80)
+    
     # 步骤3: 音频切分
     try:
         segmented_audio_paths = segment_audio(

@@ -1,5 +1,6 @@
 """
-翻译路由
+文本处理路由模块
+包含文本翻译等功能
 """
 from typing import Optional
 

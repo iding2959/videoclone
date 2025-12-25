@@ -1,23 +1,84 @@
 """
-视频标题与字幕叠加路由。
+视频处理路由模块
+包含视频裁剪、叠加字幕、音色克隆等视频处理功能
 """
-from pathlib import Path
 import uuid
 import json
+from pathlib import Path
 from typing import Optional, List, Dict, Any
 
-from fastapi import APIRouter, File, UploadFile, HTTPException
-from fastapi import Form
+from fastapi import APIRouter, File, UploadFile, HTTPException, Form
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
 from app.config import UPLOAD_DIR, OUTPUT_DIR
 from app.services.video_processing_service import (
+    detect_and_crop_video,
+    VideoCropError,
     overlay_title_and_subtitles,
     VideoOverlayError,
 )
+from app.services.workflow_service import (
+    process_video_voice_clone,
+    process_video_voice_clone_audio_only,
+    VideoVoiceCloneError,
+)
+from app.utils.logger import logger
 
 router = APIRouter()
+
+
+@router.post("/video/crop")
+async def crop_video(
+    file: UploadFile = File(...),
+    top_cut: int = 0,
+    bottom_cut: int = 0,
+):
+    """
+    上传视频并裁剪顶部/底部像素；如未指定则尝试自动检测。
+    """
+    if not file.content_type or not file.content_type.startswith("video/"):
+        raise HTTPException(status_code=400, detail="请上传视频文件")
+
+    file_id = uuid.uuid4().hex
+    extension = Path(file.filename).suffix if file.filename else ".mp4"
+    raw_video_path = UPLOAD_DIR / f"{file_id}{extension}"
+    output_video_path = OUTPUT_DIR / f"{file_id}_cropped{extension}"
+
+    try:
+        # 保存上传视频
+        content = await file.read()
+        with open(raw_video_path, "wb") as f:
+            f.write(content)
+
+        # 同步裁剪逻辑放在线程池，避免阻塞事件循环
+        cropped_path = await run_in_threadpool(
+            detect_and_crop_video,
+            raw_video_path,
+            output_video_path,
+            top_cut,
+            bottom_cut,
+        )
+
+        if not cropped_path.exists():
+            raise HTTPException(status_code=500, detail="裁剪失败，未生成输出文件")
+
+        return FileResponse(
+            path=str(cropped_path),
+            media_type=file.content_type or "video/mp4",
+            filename=f"{Path(file.filename).stem if file.filename else 'video'}_cropped{extension}",
+        )
+    except VideoCropError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
+    finally:
+        # 可选清理：保留输出文件供下载，上传文件删除
+        if raw_video_path.exists():
+            try:
+                raw_video_path.unlink()
+            except Exception:
+                pass
 
 
 def _validate_segments(segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -155,6 +216,102 @@ async def add_title_and_subtitles(
     except VideoOverlayError as e:
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
+        raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
+    finally:
+        if raw_video_path.exists():
+            try:
+                raw_video_path.unlink()
+            except Exception:
+                pass
+
+
+@router.post("/video/voice-clone-overlay")
+async def video_voice_clone_overlay(
+    file: UploadFile = File(..., description="视频文件"),
+    title_text: str = Form(..., description="顶部标题文本"),
+):
+    """
+    上传视频，完成音色克隆替换、固定裁剪（上200/下250）并叠加标题与字幕。
+    """
+    if not file.content_type or not file.content_type.startswith("video/"):
+        raise HTTPException(status_code=400, detail="请上传视频文件")
+
+    file_id = uuid.uuid4().hex
+    extension = Path(file.filename).suffix if file.filename else ".mp4"
+    raw_video_path = UPLOAD_DIR / f"{file_id}{extension}"
+
+    try:
+        logger.info("收到 /video/voice-clone-overlay 请求，文件: %s, 标题: %s", file.filename, title_text)
+        content = await file.read()
+        with open(raw_video_path, "wb") as f:
+            f.write(content)
+
+        result = await process_video_voice_clone(
+            video_path=raw_video_path,
+            title_text=title_text,
+        )
+
+        final_path: Path = result["video_path"]
+        if not final_path.exists():
+            raise HTTPException(status_code=500, detail="处理失败，未生成输出文件")
+
+        logger.info("处理完成，返回文件: %s", final_path)
+        return FileResponse(
+            path=str(final_path),
+            media_type=file.content_type or "video/mp4",
+            filename=f"{Path(file.filename).stem if file.filename else 'video'}_voice_clone_overlay{extension}",
+        )
+    except VideoVoiceCloneError as e:
+        logger.error("处理失败 VideoVoiceCloneError: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.exception("处理失败: %s", e)
+        raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
+    finally:
+        if raw_video_path.exists():
+            try:
+                raw_video_path.unlink()
+            except Exception:
+                pass
+
+
+@router.post("/video/voice-clone")
+async def video_voice_clone(
+    file: UploadFile = File(..., description="视频文件"),
+):
+    """
+    上传视频，仅进行语言翻译和音色克隆，替换原音轨，不裁剪、不叠字幕。
+    """
+    if not file.content_type or not file.content_type.startswith("video/"):
+        raise HTTPException(status_code=400, detail="请上传视频文件")
+
+    file_id = uuid.uuid4().hex
+    extension = Path(file.filename).suffix if file.filename else ".mp4"
+    raw_video_path = UPLOAD_DIR / f"{file_id}{extension}"
+
+    try:
+        logger.info("收到 /video/voice-clone 请求，文件: %s", file.filename)
+        content = await file.read()
+        with open(raw_video_path, "wb") as f:
+            f.write(content)
+
+        result = await process_video_voice_clone_audio_only(video_path=raw_video_path)
+
+        final_path: Path = result["video_path"]
+        if not final_path.exists():
+            raise HTTPException(status_code=500, detail="处理失败，未生成输出文件")
+
+        logger.info("处理完成，返回文件: %s", final_path)
+        return FileResponse(
+            path=str(final_path),
+            media_type=file.content_type or "video/mp4",
+            filename=f"{Path(file.filename).stem if file.filename else 'video'}_voice_clone{extension}",
+        )
+    except VideoVoiceCloneError as e:
+        logger.error("处理失败 VideoVoiceCloneError: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.exception("处理失败: %s", e)
         raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
     finally:
         if raw_video_path.exists():

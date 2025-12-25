@@ -1,5 +1,6 @@
 """
-TTS 音频克隆路由
+音频克隆路由模块
+包含 TTS 音色克隆相关功能
 """
 import tempfile
 import uuid
@@ -9,7 +10,12 @@ from typing import Optional
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form
 from fastapi.responses import Response
 
-from app.services.text_processing_service import synthesize_audio_async, query_task_status, download_audio_file, TTSError
+from app.services.text_processing_service import (
+    synthesize_audio_async,
+    query_task_status,
+    download_audio_file,
+    TTSError,
+)
 
 router = APIRouter()
 

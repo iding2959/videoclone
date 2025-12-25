@@ -7,17 +7,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import APP_TITLE, APP_VERSION, init_directories
 from app.utils import logger  # 导入 loguru 日志系统，确保在应用启动时初始化
 from app.routers import (
-    root,
-    health,
-    extract,
-    transcription,
-    translation,
-    tts,
-    audio_translation_clone,
-    audio_merge,
-    video_crop,
-    video_overlay,
-    video_voice_clone,
+    base,
+    audio_basic,
+    audio_clone,
+    audio_workflow,
+    text,
+    video,
 )
 
 
@@ -47,17 +42,12 @@ def create_app() -> FastAPI:
     )
     
     # 注册路由
-    app.include_router(root.router)
-    app.include_router(health.router)
-    app.include_router(extract.router)
-    app.include_router(transcription.router)
-    app.include_router(translation.router)
-    app.include_router(tts.router)
-    app.include_router(audio_translation_clone.router)
-    app.include_router(audio_merge.router)
-    app.include_router(video_crop.router)
-    app.include_router(video_overlay.router)
-    app.include_router(video_voice_clone.router)
+    app.include_router(base.router)
+    app.include_router(audio_basic.router)
+    app.include_router(audio_clone.router)
+    app.include_router(audio_workflow.router)
+    app.include_router(text.router)
+    app.include_router(video.router)
     
     return app
 

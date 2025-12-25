@@ -5,16 +5,18 @@
 1. 从视频中提取音频。
 2. 调用音频翻译克隆流程，获得克隆任务与字幕分段。
 3. 轮询并下载克隆音频，合并为完整音轨。
-4. 将合并后的音轨替换到原视频。
-5. 按固定像素裁剪视频（默认上 200、下 250）。
-6. 叠加标题与字幕，输出最终视频。
+4. 先叠加字幕到原始视频（使用原始字幕时间）。
+5. 将合并后的音轨替换到原视频（可能会调整音频速度以匹配视频长度）。
+6. 根据音频速度调整比例调整字幕时间。
+7. 按固定像素裁剪视频（默认上 390、下 430）。
+8. 重新叠加标题与字幕（使用调整后的字幕时间），输出最终视频。
 """
 import asyncio
 import logging
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 import ffmpeg
 
@@ -41,12 +43,66 @@ class VideoVoiceCloneError(Exception):
     """综合视频音色克隆错误"""
 
 
+def _adjust_subtitle_timing(
+    subtitle_segments: List[Dict[str, Any]],
+    tempo_ratio: float,
+) -> List[Dict[str, Any]]:
+    """
+    根据音频速度调整比例调整字幕时间。
+    
+    Args:
+        subtitle_segments: 原始字幕段列表，每个段包含 start 和 end 时间
+        tempo_ratio: 速度调整比例（音频时长 / 视频时长）
+            - 如果 > 1.0，音频被加速，字幕时间需要缩短
+            - 如果 < 1.0，音频被减速，字幕时间需要延长
+            - 如果 = 1.0，不需要调整
+    
+    Returns:
+        调整后的字幕段列表
+    """
+    if abs(tempo_ratio - 1.0) < 0.01:
+        # 没有调整，直接返回原始字幕
+        return subtitle_segments
+    
+    adjusted_segments = []
+    for seg in subtitle_segments:
+        original_start = float(seg.get("start", 0))
+        original_end = float(seg.get("end", original_start + 2.0))
+        
+        # 调整时间：新时间 = 原时间 / tempo_ratio
+        # 如果音频被加速（tempo_ratio > 1），字幕时间缩短
+        # 如果音频被减速（tempo_ratio < 1），字幕时间延长
+        adjusted_start = original_start / tempo_ratio
+        adjusted_end = original_end / tempo_ratio
+        
+        adjusted_seg = seg.copy()
+        adjusted_seg["start"] = adjusted_start
+        adjusted_seg["end"] = adjusted_end
+        adjusted_segments.append(adjusted_seg)
+        
+        logger.debug(
+            "字幕时间调整: [%.2f-%.2f] -> [%.2f-%.2f] (tempo_ratio=%.4f)",
+            original_start, original_end, adjusted_start, adjusted_end, tempo_ratio
+        )
+    
+    logger.info("字幕时间已调整，tempo_ratio=%.4f，调整了 %d 个字幕段", tempo_ratio, len(adjusted_segments))
+    return adjusted_segments
+
+
 async def _replace_video_audio(
     video_path: Path,
     audio_path: Path,
     output_path: Path,
-) -> Path:
-    """使用 ffmpeg 将视频音轨替换为新的音频，确保音频长度与视频长度匹配。"""
+) -> Tuple[Path, float]:
+    """
+    使用 ffmpeg 将视频音轨替换为新的音频，确保音频长度与视频长度匹配。
+    
+    返回: (输出视频路径, 速度调整比例)
+    速度调整比例 = 音频时长 / 视频时长
+    - 如果 > 1.0，表示音频被加速了
+    - 如果 < 1.0，表示音频被减速了
+    - 如果 = 1.0，表示没有调整
+    """
     if not video_path.exists():
         raise VideoVoiceCloneError(f"视频文件不存在: {video_path}")
     if not audio_path.exists():
@@ -79,6 +135,7 @@ async def _replace_video_audio(
             # 时长几乎相同，不需要调整
             logger.info("音频和视频时长匹配，无需调整")
             processed_audio = audio_input["a"]
+            tempo_ratio = 1.0
         else:
             # 计算速度调整比例：音频时长 / 视频时长
             # 如果音频长，需要加速（tempo > 1.0）
@@ -129,8 +186,8 @@ async def _replace_video_audio(
             shortest=None,
         )
         ffmpeg.run(stream, overwrite_output=True, quiet=True)
-        logger.info("音轨替换完成 -> 输出: %s", output_path)
-        return output_path
+        logger.info("音轨替换完成 -> 输出: %s, 速度调整比例: %.4f", output_path, tempo_ratio)
+        return output_path, tempo_ratio
     except ffmpeg.Error as e:
         detail = e.stderr.decode() if e.stderr else str(e)
         raise VideoVoiceCloneError(f"音频替换失败: {detail}")
@@ -294,7 +351,7 @@ async def process_video_voice_clone_audio_only(
 
         # 4. 替换视频音轨
         logger.info("步骤4: 替换视频音轨（不裁剪，不叠字幕）")
-        await _replace_video_audio(video_path, merged_audio_path, final_video_path)
+        _, tempo_ratio = await _replace_video_audio(video_path, merged_audio_path, final_video_path)
 
         logger.info("流程完成，输出视频: %s", final_video_path)
         return {
@@ -334,13 +391,21 @@ async def process_video_voice_clone(
 ) -> Dict[str, Any]:
     """
     执行视频音色克隆、裁剪与字幕叠加的完整流程。
+    
+    流程说明：
+    1. 先叠加字幕到原始视频（使用原始字幕时间，基于转录翻译返回的时间）
+    2. 替换音轨并调整速度（如果音频和视频时长不匹配）
+    3. 根据速度调整比例调整字幕时间，确保字幕与调整后的音频同步
+    4. 裁剪视频
+    5. 重新叠加字幕（使用调整后的时间）
 
-    返回最终视频路径及字幕数据。
+    返回最终视频路径及字幕数据（包含原始和调整后的字幕时间）。
     """
     if not video_path.exists():
         raise VideoVoiceCloneError(f"视频文件不存在: {video_path}")
 
     temp_audio_path = Path(tempfile.gettempdir()) / f"{uuid.uuid4().hex}.wav"
+    subtitled_video_path = OUTPUT_DIR / f"subtitled_{uuid.uuid4().hex}{video_path.suffix}"
     replaced_video_path = OUTPUT_DIR / f"voice_replaced_{uuid.uuid4().hex}{video_path.suffix}"
     cropped_video_path = OUTPUT_DIR / f"cropped_{uuid.uuid4().hex}{video_path.suffix}"
     final_video_path = OUTPUT_DIR / f"voice_clone_overlay_{uuid.uuid4().hex}{video_path.suffix}"
@@ -353,8 +418,8 @@ async def process_video_voice_clone(
         # 2. 音频翻译克隆，获取字幕
         logger.info("步骤2: 调用音频翻译克隆流程")
         clone_result = await process_audio_translation_clone(audio_file_path=temp_audio_path)
-        subtitle_segments = clone_result.get("subtitle_segments", [])
-        logger.info("克隆任务数: %d，字幕段数: %d", len(clone_result.get("tasks", [])), len(subtitle_segments))
+        original_subtitle_segments = clone_result.get("subtitle_segments", [])
+        logger.info("克隆任务数: %d，字幕段数: %d", len(clone_result.get("tasks", [])), len(original_subtitle_segments))
 
         # 3. 下载并合并克隆音频
         logger.info("步骤3: 下载并合并克隆音频")
@@ -365,12 +430,35 @@ async def process_video_voice_clone(
             base_url=base_url,
         )
 
-        # 4. 替换视频音轨
-        logger.info("步骤4: 替换视频音轨")
-        await _replace_video_audio(video_path, merged_audio_path, replaced_video_path)
+        # 4. 先叠加字幕到原始视频（使用原始字幕时间）
+        logger.info("步骤4: 先叠加字幕到原始视频（使用原始字幕时间）")
+        await asyncio.to_thread(
+            overlay_title_and_subtitles,
+            video_path,
+            subtitled_video_path,
+            title_text,
+            original_subtitle_segments,
+            title_block_height,
+            subtitle_block_height,
+            title_font_size,
+            subtitle_font_size,
+            fontfile,
+        )
 
-        # 5. 固定裁剪
-        logger.info("步骤5: 固定裁剪视频 top=%d bottom=%d", top_cut, bottom_cut)
+        # 5. 替换视频音轨并获取速度调整比例
+        logger.info("步骤5: 替换视频音轨（在已叠加字幕的视频上）")
+        _, tempo_ratio = await _replace_video_audio(subtitled_video_path, merged_audio_path, replaced_video_path)
+
+        # 6. 根据速度调整比例调整字幕时间
+        if abs(tempo_ratio - 1.0) > 0.01:
+            logger.info("步骤6: 根据速度调整比例 %.4f 调整字幕时间", tempo_ratio)
+            adjusted_subtitle_segments = _adjust_subtitle_timing(original_subtitle_segments, tempo_ratio)
+        else:
+            logger.info("步骤6: 音频速度未调整，字幕时间保持不变")
+            adjusted_subtitle_segments = original_subtitle_segments
+
+        # 7. 固定裁剪
+        logger.info("步骤7: 固定裁剪视频 top=%d bottom=%d", top_cut, bottom_cut)
         await asyncio.to_thread(
             detect_and_crop_video,
             replaced_video_path,
@@ -379,14 +467,14 @@ async def process_video_voice_clone(
             bottom_cut,
         )
 
-        # 6. 叠加标题与字幕
-        logger.info("步骤6: 叠加标题与字幕，标题: %s", title_text)
+        # 8. 重新叠加标题与字幕（使用调整后的字幕时间）
+        logger.info("步骤8: 重新叠加标题与字幕（使用调整后的字幕时间），标题: %s", title_text)
         await asyncio.to_thread(
             overlay_title_and_subtitles,
             cropped_video_path,
             final_video_path,
             title_text,
-            subtitle_segments,
+            adjusted_subtitle_segments,
             title_block_height,
             subtitle_block_height,
             title_font_size,
@@ -397,7 +485,9 @@ async def process_video_voice_clone(
         logger.info("流程完成，输出视频: %s", final_video_path)
         return {
             "video_path": final_video_path,
-            "subtitle_segments": subtitle_segments,
+            "subtitle_segments": adjusted_subtitle_segments,
+            "original_subtitle_segments": original_subtitle_segments,
+            "tempo_ratio": tempo_ratio,
             "clone_result": clone_result,
         }
 
@@ -412,6 +502,7 @@ async def process_video_voice_clone(
         for path in [
             temp_audio_path,
             merged_audio_path if "merged_audio_path" in locals() else None,
+            subtitled_video_path if subtitled_video_path.exists() and final_video_path != subtitled_video_path else None,
             replaced_video_path if replaced_video_path.exists() and final_video_path != replaced_video_path else None,
             cropped_video_path if cropped_video_path.exists() and final_video_path != cropped_video_path else None,
         ]:

@@ -2,6 +2,7 @@
 音频翻译克隆服务
 整合音频转录、翻译、切分和音色克隆的完整流程
 """
+import logging
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
@@ -9,6 +10,8 @@ from app.services.transcription_service import transcribe_audio, TranscriptionEr
 from app.services.translation_service import translate_text, TranslationError
 from app.services.audio_segmentation_service import segment_audio, AudioSegmentationError
 from app.services.tts_service import synthesize_audio_async, TTSError
+
+logger = logging.getLogger(__name__)
 
 
 class AudioTranslationCloneError(Exception):
@@ -253,15 +256,20 @@ async def process_audio_translation_clone(
                 "audio_path": str(segmented_audio_path),
             })
     
-    # 准备用于字幕的数据，保持时间轴顺序
+    # 准备用于字幕的数据，直接从 translated_segments 中提取（与 /transcribe-and-translate 接口保持一致）
+    # 这样可以确保所有有翻译文本的段都有对应的字幕
     subtitle_segments = []
     for seg in sorted_translated_segments:
         start = float(seg.get("start", 0))
         end = float(seg.get("end", 0))
         translated_text = seg.get("translated_text")
+        
         # 仅当有有效翻译文本时才用于字幕，避免空字幕
-        if end <= start or not translated_text or not str(translated_text).strip():
+        if end <= start:
             continue
+        if not translated_text or not str(translated_text).strip():
+            continue
+        
         subtitle_segments.append({
             "start": start,
             "end": end,
@@ -269,6 +277,17 @@ async def process_audio_translation_clone(
             "translated_text": translated_text,
             "translation_error": seg.get("translation_error"),
         })
+    
+    # 按 start 时间排序字幕段（虽然已经排序了，但为了确保）
+    subtitle_segments.sort(key=lambda x: x.get("start", 0))
+    
+    # 记录字幕段生成信息
+    logger.info(
+        "字幕段生成完成: 从 %d 个翻译段中提取了 %d 个字幕段（总转录段数: %d）",
+        len(sorted_translated_segments),
+        len(subtitle_segments),
+        len(segments)
+    )
 
     # 返回结果
     return {

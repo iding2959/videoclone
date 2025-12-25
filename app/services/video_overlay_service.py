@@ -144,34 +144,48 @@ def overlay_title_and_subtitles(
         if title_block_height <= 0 or subtitle_block_height <= 0:
             raise VideoOverlayError("标题/字幕块高度必须大于 0")
 
-        # 不再绘制整块黑色遮罩，仅根据块高度计算文字位置
-        box_filters = []
-
         # 标题字体和位置（在顶部块内垂直居中）
         title_fontsize = title_font_size or max(18, int(height * 0.04))
         # 估算单行最大字符数，防止过长缺失
         max_title_chars = max(8, int(width / max(1, title_fontsize * 0.55)))
         wrapped_title = _wrap_text(title_text, max_title_chars)
         title_y = max(0, (title_block_height - title_fontsize) // 2)
-        title_filter = _build_drawtext_filter(
-            text=wrapped_title,
-            x="(w-text_w)/2",
-            y=str(title_y),
-            start=0,
-            end=float(video_stream.get("duration", 1e6)),
-            font_size=title_fontsize,
-            font_color="white",
-            box=True,
-            box_color="black@0.4",
-            box_border=10,
-            fontfile=fontfile,
-        )
-
+        
         # 字幕字体和位置：距底部 subtitle_block_height 内垂直居中
-        subtitle_filters = []
         subtitle_fontsize = subtitle_font_size or max(16, int(height * 0.035))
         subtitle_y = f"(h-{subtitle_block_height}+({subtitle_block_height}-text_h)/2)"
+        
+        # 使用 FFmpeg Python 库的 filter() 方法串联多个过滤器
+        # 这样可以确保所有 drawtext 过滤器都能正确应用
+        stream = ffmpeg.input(str(video_path))
+        video = stream["v"]
+        
+        # 先应用标题过滤器（全程显示）
+        video_duration = float(video_stream.get("duration", 1e6))
+        # 转义标题文本中的特殊字符
+        safe_title = (
+            wrapped_title
+            .replace(":", r"\:")
+            .replace("'", r"\'")
+            .replace(",", r"\,")
+            .replace("\n", r"\n")
+        )
+        video = video.filter("drawtext", 
+            text=safe_title,
+            x="(w-text_w)/2",
+            y=str(title_y),
+            fontsize=title_fontsize,
+            fontcolor="white",
+            box=1,
+            boxcolor="black@0.4",
+            boxborderw=10,
+            enable=f"between(t,0,{video_duration:.3f})",
+            **({"fontfile": fontfile} if fontfile else {})
+        )
+        
+        # 然后依次应用每个字幕过滤器
         logger.info("开始叠加字幕，共 %d 个字幕段", len(subtitle_segments))
+        subtitle_count = 0
         for idx, seg in enumerate(subtitle_segments, 1):
             start = float(seg.get("start", 0))
             end = float(seg.get("end", start + 2.0))
@@ -181,30 +195,35 @@ def overlay_title_and_subtitles(
                 continue
             max_sub_chars = max(8, int(width / max(1, subtitle_fontsize * 0.55)))
             wrapped_text = _wrap_text(text, max_sub_chars)
-            logger.debug("添加字幕段 %d: [%.2f-%.2f] %s", idx, start, end, text[:50])
-            subtitle_filters.append(
-                _build_drawtext_filter(
-                    text=wrapped_text,
-                    x="(w-text_w)/2",
-                    y=subtitle_y,
-                    start=start,
-                    end=end,
-                    font_size=subtitle_fontsize,
-                    font_color="white",
-                    box=True,
-                    box_color="black@0.35",
-                    box_border=8,
-                    fontfile=fontfile,
-                )
+            
+            # 转义特殊字符
+            safe_text = (
+                wrapped_text
+                .replace(":", r"\:")
+                .replace("'", r"\'")
+                .replace(",", r"\,")
+                .replace("\n", r"\n")
             )
-        logger.info("字幕叠加完成，共添加 %d 个字幕过滤器", len(subtitle_filters))
-
-        vf_chain = ",".join(box_filters + [title_filter] + subtitle_filters)
-        stream = ffmpeg.input(str(video_path))
+            
+            logger.debug("添加字幕段 %d: [%.2f-%.2f] %s", idx, start, end, text[:50])
+            video = video.filter("drawtext",
+                text=safe_text,
+                x="(w-text_w)/2",
+                y=subtitle_y,
+                fontsize=subtitle_fontsize,
+                fontcolor="white",
+                box=1,
+                boxcolor="black@0.35",
+                boxborderw=8,
+                enable=f"between(t,{start:.3f},{end:.3f})",
+                **({"fontfile": fontfile} if fontfile else {})
+            )
+            subtitle_count += 1
+        logger.info("字幕叠加完成，共添加 %d 个字幕过滤器（标题 + %d 个字幕）", subtitle_count + 1, subtitle_count)
+        
         stream = ffmpeg.output(
-            stream,
+            video,
             str(out_path),
-            vf=vf_chain,
             vcodec="libx264",
             acodec="copy",
             preset="medium",

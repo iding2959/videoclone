@@ -7,9 +7,9 @@
 3. 轮询并下载克隆音频，合并为完整音轨。
 4. 先叠加字幕到原始视频（使用原始字幕时间）。
 5. 将合并后的音轨替换到原视频（可能会调整音频速度以匹配视频长度）。
-6. 根据音频速度调整比例调整字幕时间。
+6. 字幕时间保持原始时间不变（因为音频被加速以匹配视频时长，视频时长保持不变）。
 7. 按固定像素裁剪视频（默认上 390、下 430）。
-8. 重新叠加标题与字幕（使用调整后的字幕时间），输出最终视频。
+8. 重新叠加标题与字幕（使用原始字幕时间），输出最终视频。
 """
 import asyncio
 import logging
@@ -394,12 +394,12 @@ async def process_video_voice_clone(
     
     流程说明：
     1. 先叠加字幕到原始视频（使用原始字幕时间，基于转录翻译返回的时间）
-    2. 替换音轨并调整速度（如果音频和视频时长不匹配）
-    3. 根据速度调整比例调整字幕时间，确保字幕与调整后的音频同步
+    2. 替换音轨并调整速度（如果音频和视频时长不匹配，音频会被加速/减速以匹配视频时长）
+    3. 字幕时间保持原始时间不变（因为音频被调整以匹配视频时长，视频时长保持不变）
     4. 裁剪视频
-    5. 重新叠加字幕（使用调整后的时间）
+    5. 重新叠加字幕（使用原始字幕时间）
 
-    返回最终视频路径及字幕数据（包含原始和调整后的字幕时间）。
+    返回最终视频路径及字幕数据（字幕时间与原始时间相同）。
     """
     if not video_path.exists():
         raise VideoVoiceCloneError(f"视频文件不存在: {video_path}")
@@ -455,18 +455,11 @@ async def process_video_voice_clone(
         logger.info("步骤5: 替换视频音轨（在已叠加字幕的视频上）")
         _, tempo_ratio = await _replace_video_audio(subtitled_video_path, merged_audio_path, replaced_video_path)
 
-        # 6. 根据速度调整比例调整字幕时间
-        if abs(tempo_ratio - 1.0) > 0.01:
-            logger.info("步骤6: 根据速度调整比例 %.4f 调整字幕时间", tempo_ratio)
-            adjusted_subtitle_segments = _adjust_subtitle_timing(original_subtitle_segments, tempo_ratio)
-            logger.info("调整后的字幕段数: %d", len(adjusted_subtitle_segments))
-            for idx, seg in enumerate(adjusted_subtitle_segments, 1):
-                logger.info("  调整后字幕段 %d: [%.2f - %.2f] %s", 
-                           idx, seg.get("start", 0), seg.get("end", 0), seg.get("translated_text", "")[:50])
-        else:
-            logger.info("步骤6: 音频速度未调整，字幕时间保持不变")
-            adjusted_subtitle_segments = original_subtitle_segments
-            logger.info("保持原字幕段数: %d", len(adjusted_subtitle_segments))
+        # 6. 不需要调整字幕时间，因为音频被加速以匹配视频时长，视频时长保持不变
+        # 字幕时间应该保持原始时间，与视频时长一致
+        logger.info("步骤6: 音频已调整以匹配视频时长，字幕时间保持原始时间不变")
+        adjusted_subtitle_segments = original_subtitle_segments
+        logger.info("保持原字幕段数: %d", len(adjusted_subtitle_segments))
 
         # 7. 固定裁剪
         logger.info("步骤7: 固定裁剪视频 top=%d bottom=%d", top_cut, bottom_cut)
@@ -478,8 +471,8 @@ async def process_video_voice_clone(
             bottom_cut,
         )
 
-        # 8. 重新叠加标题与字幕（使用调整后的字幕时间）
-        logger.info("步骤8: 重新叠加标题与字幕（使用调整后的字幕时间），标题: %s", title_text)
+        # 8. 重新叠加标题与字幕（使用原始字幕时间）
+        logger.info("步骤8: 重新叠加标题与字幕（使用原始字幕时间），标题: %s", title_text)
         await asyncio.to_thread(
             overlay_title_and_subtitles,
             cropped_video_path,

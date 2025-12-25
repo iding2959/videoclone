@@ -12,9 +12,8 @@ from fastapi import APIRouter, File, UploadFile, HTTPException, Form
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from app.services.transcription_service import transcribe_audio, TranscriptionError
-from app.services.audio_segmentation_service import segment_audio, AudioSegmentationError
-from app.services.translation_service import translate_text, TranslationError
+from app.services.text_processing_service import transcribe_audio, TranscriptionError, translate_text, TranslationError
+from app.services.audio_processing_service import segment_audio, AudioSegmentationError
 from app.config import OUTPUT_DIR
 
 router = APIRouter()

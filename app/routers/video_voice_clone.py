@@ -1,7 +1,6 @@
 """
 综合视频音色克隆、裁剪与字幕叠加路由。
 """
-import logging
 import uuid
 from pathlib import Path
 
@@ -9,14 +8,14 @@ from fastapi import APIRouter, File, UploadFile, HTTPException, Form
 from fastapi.responses import FileResponse
 
 from app.config import UPLOAD_DIR, OUTPUT_DIR
-from app.services.video_voice_clone_service import (
+from app.services.workflow_service import (
     process_video_voice_clone,
     process_video_voice_clone_audio_only,
     VideoVoiceCloneError,
 )
+from app.utils.logger import logger
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
 
 
 @router.post("/video/voice-clone-overlay")

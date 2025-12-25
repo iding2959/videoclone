@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form
 from fastapi.responses import Response
 
-from app.services.tts_service import synthesize_audio_async, query_task_status, download_audio_file, TTSError
+from app.services.text_processing_service import synthesize_audio_async, query_task_status, download_audio_file, TTSError
 
 router = APIRouter()
 

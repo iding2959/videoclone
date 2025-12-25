@@ -8,7 +8,7 @@ from fastapi import APIRouter, File, UploadFile, HTTPException
 from fastapi.responses import FileResponse
 
 from app.config import UPLOAD_DIR, OUTPUT_DIR
-from app.services.audio_service import extract_audio, AudioExtractionError
+from app.services.audio_processing_service import extract_audio, AudioExtractionError
 
 router = APIRouter()
 

@@ -12,11 +12,11 @@ from fastapi import APIRouter, File, UploadFile, HTTPException, Form, Body
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any, Union
 
-from app.services.audio_translation_clone_service import (
+from app.services.workflow_service import (
     process_audio_translation_clone,
     AudioTranslationCloneError,
 )
-from app.services.tts_service import query_task_status, TTSError
+from app.services.text_processing_service import query_task_status, TTSError
 
 router = APIRouter()
 

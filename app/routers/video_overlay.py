@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
 from app.config import UPLOAD_DIR, OUTPUT_DIR
-from app.services.video_overlay_service import (
+from app.services.video_processing_service import (
     overlay_title_and_subtitles,
     VideoOverlayError,
 )

@@ -10,7 +10,8 @@ from typing import Optional
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form
 from fastapi.responses import FileResponse
 
-from app.services.audio_merge_service import merge_cloned_audios, AudioMergeError
+from app.services.workflow_service import merge_cloned_audios
+from app.services.audio_processing_service import AudioMergeError
 
 router = APIRouter()
 

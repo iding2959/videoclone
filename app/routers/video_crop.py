@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
 from app.config import UPLOAD_DIR, OUTPUT_DIR
-from app.services.video_crop_service import detect_and_crop_video, VideoCropError
+from app.services.video_processing_service import detect_and_crop_video, VideoCropError
 
 router = APIRouter()
 

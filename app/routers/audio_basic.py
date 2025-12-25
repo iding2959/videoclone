@@ -1,0 +1,525 @@
+"""
+音频基础处理路由模块
+包含音频提取、转录、切分等基础功能
+"""
+import json
+import tempfile
+import uuid
+import zipfile
+from pathlib import Path
+from typing import Optional, List, Dict, Any
+
+from fastapi import APIRouter, File, UploadFile, HTTPException, Form
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+
+from app.config import UPLOAD_DIR, OUTPUT_DIR
+from app.services.audio_processing_service import (
+    extract_audio,
+    AudioExtractionError,
+    segment_audio,
+    AudioSegmentationError,
+)
+from app.services.text_processing_service import (
+    transcribe_audio,
+    TranscriptionError,
+    translate_text,
+    TranslationError,
+)
+
+router = APIRouter()
+
+
+class TranscriptionResponse(BaseModel):
+    """转录响应模型"""
+    text: Optional[str] = None
+    language: Optional[str] = None
+    duration: Optional[float] = None
+    segments: Optional[list] = None
+
+
+@router.post("/extract")
+async def extract_audio_from_video(file: UploadFile = File(...)):
+    """
+    上传视频文件并提取音频
+    
+    Args:
+        file: 上传的视频文件
+        
+    Returns:
+        提取的音频文件
+    """
+    # 验证文件类型
+    if not file.content_type or not file.content_type.startswith("video/"):
+        raise HTTPException(status_code=400, detail="请上传视频文件")
+    
+    # 生成唯一文件名
+    file_id = str(uuid.uuid4())
+    video_extension = Path(file.filename).suffix if file.filename else ".mp4"
+    video_path = UPLOAD_DIR / f"{file_id}{video_extension}"
+    audio_path = OUTPUT_DIR / f"{file_id}.wav"
+    
+    try:
+        # 保存上传的视频文件
+        with open(video_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+        
+        # 提取音频
+        extract_audio(video_path, audio_path)
+        
+        # 检查输出文件是否存在
+        if not audio_path.exists():
+            raise HTTPException(status_code=500, detail="音频提取失败，输出文件未生成")
+        
+        # 返回音频文件
+        return FileResponse(
+            path=str(audio_path),
+            media_type="audio/wav",
+            filename=f"{Path(file.filename).stem if file.filename else 'audio'}.wav"
+        )
+    
+    except AudioExtractionError as e:
+        # 清理已创建的文件
+        if video_path.exists():
+            video_path.unlink()
+        if audio_path.exists():
+            audio_path.unlink()
+        
+        raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
+    
+    except Exception as e:
+        # 清理已创建的文件
+        if video_path.exists():
+            video_path.unlink()
+        if audio_path.exists():
+            audio_path.unlink()
+        
+        raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
+    
+    finally:
+        # 清理上传的视频文件（可选，根据需求决定是否保留）
+        if video_path.exists():
+            video_path.unlink()
+
+
+@router.post("/transcribe")
+async def transcribe_audio_file(
+    file: UploadFile = File(...),
+    model: Optional[str] = Form(None),
+    language: Optional[str] = Form(None),
+    response_format: Optional[str] = Form(None),
+):
+    """
+    上传音频文件并进行转录
+    
+    Args:
+        file: 上传的音频文件
+        model: 使用的模型（可选，默认使用配置中的模型）
+        language: 语言代码（可选，默认使用配置中的语言）
+        response_format: 响应格式（可选，默认使用配置中的格式）
+        
+    Returns:
+        转录结果
+    """
+    # 验证文件类型
+    if not file.content_type or not file.content_type.startswith("audio/"):
+        raise HTTPException(status_code=400, detail="请上传音频文件")
+    
+    # 创建临时文件
+    file_id = str(uuid.uuid4())
+    file_extension = Path(file.filename).suffix if file.filename else ".mp3"
+    temp_file_path = Path(tempfile.gettempdir()) / f"{file_id}{file_extension}"
+    
+    try:
+        # 保存上传的音频文件到临时目录
+        with open(temp_file_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+        
+        # 调用转录服务
+        result = await transcribe_audio(
+            audio_file_path=temp_file_path,
+            model=model,
+            language=language,
+            response_format=response_format,
+        )
+        
+        return result
+    
+    except TranscriptionError as e:
+        raise HTTPException(status_code=500, detail=f"转录失败: {str(e)}")
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
+    
+    finally:
+        # 清理临时文件
+        if temp_file_path.exists():
+            temp_file_path.unlink()
+
+
+@router.post("/segment")
+async def segment_audio_file(
+    file: UploadFile = File(...),
+    transcription_result: Optional[str] = Form(None),
+    model: Optional[str] = Form(None),
+    language: Optional[str] = Form(None),
+    response_format: Optional[str] = Form(None),
+    download: Optional[bool] = Form(False),
+):
+    """
+    根据转录结果切分音频文件
+    
+    如果未提供 transcription_result，将自动调用转录服务进行转录。
+    
+    Args:
+        file: 上传的音频文件
+        transcription_result: 转录结果 JSON 字符串（可选），如果提供则使用该结果，否则自动调用转录服务
+        model: 转录使用的模型（可选，仅在自动转录时使用）
+        language: 转录使用的语言代码（可选，仅在自动转录时使用）
+        response_format: 转录响应格式（可选，仅在自动转录时使用）
+        download: 是否直接返回 ZIP 压缩包（默认 False，返回 JSON 信息）
+        
+    Returns:
+        如果 download=True，返回 ZIP 压缩包文件
+        如果 download=False，返回切分后的音频文件信息（JSON）
+    """
+    # 验证文件类型
+    if not file.content_type or not file.content_type.startswith("audio/"):
+        raise HTTPException(status_code=400, detail="请上传音频文件")
+    
+    # 创建临时文件
+    file_id = str(uuid.uuid4())
+    file_extension = Path(file.filename).suffix if file.filename else ".mp3"
+    temp_file_path = Path(tempfile.gettempdir()) / f"{file_id}{file_extension}"
+    
+    transcription_data = None
+    
+    try:
+        # 保存上传的音频文件到临时目录
+        with open(temp_file_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+        
+        # 如果没有提供转录结果，自动调用转录服务
+        if transcription_result is None:
+            try:
+                transcription_data = await transcribe_audio(
+                    audio_file_path=temp_file_path,
+                    model=model,
+                    language=language,
+                    response_format=response_format,
+                )
+            except TranscriptionError as e:
+                raise HTTPException(status_code=500, detail=f"自动转录失败: {str(e)}")
+        else:
+            # 解析提供的转录结果
+            try:
+                transcription_data = json.loads(transcription_result)
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="转录结果 JSON 格式错误")
+        
+        # 从转录结果中提取 segments 和 duration
+        segments = transcription_data.get("segments", [])
+        duration = transcription_data.get("duration", 0)
+        
+        if not segments:
+            raise HTTPException(status_code=400, detail="转录结果中 segments 为空")
+        
+        if duration <= 0:
+            raise HTTPException(status_code=400, detail="转录结果中 duration 无效")
+        
+        # 调用音频切分服务
+        output_paths = segment_audio(
+            audio_file_path=temp_file_path,
+            segments=segments,
+            duration=duration,
+        )
+        
+        # 如果请求下载，返回 ZIP 压缩包
+        if download:
+            # 创建临时 ZIP 文件
+            zip_id = str(uuid.uuid4())
+            zip_path = Path(tempfile.gettempdir()) / f"{zip_id}.zip"
+            
+            try:
+                # 创建 ZIP 文件
+                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for path in output_paths:
+                        if path.exists():
+                            zipf.write(path, path.name)
+                
+                # 生成下载文件名
+                audio_stem = temp_file_path.stem
+                zip_filename = f"{audio_stem}_segments.zip"
+                
+                # 返回 ZIP 文件
+                return FileResponse(
+                    path=str(zip_path),
+                    media_type="application/zip",
+                    filename=zip_filename
+                )
+            except Exception as e:
+                # 清理 ZIP 文件
+                if zip_path.exists():
+                    zip_path.unlink()
+                raise HTTPException(status_code=500, detail=f"创建 ZIP 文件失败: {str(e)}")
+        
+        # 返回切分后的文件信息和转录结果
+        return {
+            "message": "音频切分成功",
+            "transcription": {
+                "text": transcription_data.get("text"),
+                "language": transcription_data.get("language"),
+                "duration": transcription_data.get("duration"),
+                "model": transcription_data.get("model"),
+            },
+            "segment_count": len(output_paths),
+            "segments": [
+                {
+                    "index": idx,
+                    "filename": path.name,
+                    "path": str(path),
+                }
+                for idx, path in enumerate(output_paths, 1)
+            ]
+        }
+    
+    except HTTPException:
+        raise
+    except AudioSegmentationError as e:
+        raise HTTPException(status_code=500, detail=f"音频切分失败: {str(e)}")
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
+    
+    finally:
+        # 清理临时文件
+        if temp_file_path.exists():
+            temp_file_path.unlink()
+
+
+@router.get("/segment/download/{filename}")
+async def download_segment_file(filename: str):
+    """
+    下载单个切分后的音频文件
+    
+    Args:
+        filename: 切分后的音频文件名
+        
+    Returns:
+        音频文件
+    """
+    file_path = OUTPUT_DIR / filename
+    
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"文件不存在: {filename}")
+    
+    # 验证文件在输出目录中（防止路径遍历攻击）
+    try:
+        file_path.resolve().relative_to(OUTPUT_DIR.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="无权访问该文件")
+    
+    # 根据文件扩展名确定媒体类型
+    file_extension = Path(filename).suffix.lower()
+    media_types = {
+        ".wav": "audio/wav",
+        ".mp3": "audio/mpeg",
+        ".mpeg": "audio/mpeg",
+        ".ogg": "audio/ogg",
+        ".flac": "audio/flac",
+        ".aac": "audio/aac",
+        ".m4a": "audio/mp4",
+    }
+    media_type = media_types.get(file_extension, "audio/wav")  # 默认为 wav
+    
+    return FileResponse(
+        path=str(file_path),
+        media_type=media_type,
+        filename=filename
+    )
+
+
+@router.post("/segment/download")
+async def download_segments_zip(
+    file_paths: str = Form(...),
+):
+    """
+    下载多个切分后的音频文件（打包成 ZIP）
+    
+    Args:
+        file_paths: 文件路径列表的 JSON 字符串，例如 ["outputs/file1.mp3", "outputs/file2.mp3"]
+        
+    Returns:
+        ZIP 压缩包文件
+    """
+    try:
+        paths_list = json.loads(file_paths)
+        if not isinstance(paths_list, list):
+            raise ValueError("file_paths 必须是数组")
+    except (json.JSONDecodeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f"文件路径格式错误: {str(e)}")
+    
+    if not paths_list:
+        raise HTTPException(status_code=400, detail="文件路径列表为空")
+    
+    # 创建临时 ZIP 文件
+    zip_id = str(uuid.uuid4())
+    zip_path = Path(tempfile.gettempdir()) / f"{zip_id}.zip"
+    
+    try:
+        # 创建 ZIP 文件
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for file_path_str in paths_list:
+                file_path = Path(file_path_str)
+                
+                # 验证文件在输出目录中（防止路径遍历攻击）
+                try:
+                    file_path.resolve().relative_to(OUTPUT_DIR.resolve())
+                except ValueError:
+                    continue  # 跳过不在输出目录中的文件
+                
+                if file_path.exists() and file_path.is_file():
+                    zipf.write(file_path, file_path.name)
+        
+        # 生成下载文件名
+        zip_filename = "audio_segments.zip"
+        
+        # 返回 ZIP 文件
+        return FileResponse(
+            path=str(zip_path),
+            media_type="application/zip",
+            filename=zip_filename
+        )
+    
+    except Exception as e:
+        # 清理 ZIP 文件
+        if zip_path.exists():
+            zip_path.unlink()
+        raise HTTPException(status_code=500, detail=f"创建 ZIP 文件失败: {str(e)}")
+
+
+@router.post("/transcribe-and-translate")
+async def transcribe_and_translate_audio_file(
+    file: UploadFile = File(...),
+    transcription_model: Optional[str] = Form(None),
+    transcription_language: Optional[str] = Form(None),
+    transcription_response_format: Optional[str] = Form(None),
+    translation_model: Optional[str] = Form(None),
+    translation_system_prompt: Optional[str] = Form(None),
+):
+    """
+    上传音频文件，进行转录，然后按段翻译
+    
+    Args:
+        file: 上传的音频文件
+        transcription_model: 转录使用的模型（可选，默认使用配置中的模型）
+        transcription_language: 转录使用的语言代码（可选，默认使用配置中的语言）
+        transcription_response_format: 转录响应格式（可选，默认使用配置中的格式）
+        translation_model: 翻译使用的模型（可选，默认使用配置中的模型）
+        translation_system_prompt: 翻译使用的系统提示词（可选，默认使用配置中的提示词）
+        
+    Returns:
+        包含转录结果和按段翻译结果的字典
+    """
+    # 验证文件类型
+    if not file.content_type or not file.content_type.startswith("audio/"):
+        raise HTTPException(status_code=400, detail="请上传音频文件")
+    
+    # 创建临时文件
+    file_id = str(uuid.uuid4())
+    file_extension = Path(file.filename).suffix if file.filename else ".mp3"
+    temp_file_path = Path(tempfile.gettempdir()) / f"{file_id}{file_extension}"
+    
+    try:
+        # 保存上传的音频文件到临时目录
+        with open(temp_file_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+        
+        # 调用转录服务
+        try:
+            transcription_result = await transcribe_audio(
+                audio_file_path=temp_file_path,
+                model=transcription_model,
+                language=transcription_language,
+                response_format=transcription_response_format,
+            )
+        except TranscriptionError as e:
+            raise HTTPException(status_code=500, detail=f"转录失败: {str(e)}")
+        
+        # 提取 segments
+        segments = transcription_result.get("segments", [])
+        
+        if not segments:
+            raise HTTPException(status_code=400, detail="转录结果中 segments 为空")
+        
+        # 对每个 segment 进行翻译
+        translated_segments = []
+        for idx, segment in enumerate(segments):
+            segment_text = segment.get("text", "").strip()
+            
+            if not segment_text:
+                # 如果 segment 没有文本，保留原始 segment，不添加翻译
+                translated_segments.append({
+                    **segment,
+                    "translated_text": None,
+                    "translation_error": None,
+                })
+                continue
+            
+            try:
+                # 调用翻译服务
+                translation_result = await translate_text(
+                    text=segment_text,
+                    model=translation_model,
+                    system_prompt=translation_system_prompt,
+                )
+                
+                # 从翻译结果中提取翻译文本
+                # 根据返回格式：choices[0].message.content
+                translated_text = None
+                if translation_result.get("choices") and len(translation_result["choices"]) > 0:
+                    message = translation_result["choices"][0].get("message", {})
+                    translated_text = message.get("content", "").strip()
+                
+                # 构建翻译后的 segment
+                translated_segments.append({
+                    **segment,
+                    "translated_text": translated_text,
+                    "translation_error": None,
+                })
+            
+            except TranslationError as e:
+                # 翻译失败时，保留原始 segment，记录错误
+                translated_segments.append({
+                    **segment,
+                    "translated_text": None,
+                    "translation_error": str(e),
+                })
+        
+        # 返回结果
+        return {
+            "transcription": {
+                "text": transcription_result.get("text"),
+                "language": transcription_result.get("language"),
+                "duration": transcription_result.get("duration"),
+                "model": transcription_result.get("model"),
+            },
+            "segments": translated_segments,
+            "total_segments": len(segments),
+            "translated_segments": len([s for s in translated_segments if s.get("translated_text")]),
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"处理失败: {str(e)}")
+    
+    finally:
+        # 清理临时文件
+        if temp_file_path.exists():
+            temp_file_path.unlink()
+
